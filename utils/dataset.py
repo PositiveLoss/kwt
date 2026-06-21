@@ -19,6 +19,7 @@ from utils.connear import (
     CONNEAR_WEIGHTS_URL,
     extract_connear_features_batch,
 )
+from utils.misc import log_event
 from utils.types import Config
 
 FEATURE_CACHE_VERSION = 5
@@ -430,7 +431,7 @@ def init_connear_feature_cache(
         pending_indices = []
         pending_waveforms = []
 
-    with tqdm(total=len(data_list)) as progress:
+    with tqdm(total=len(data_list), desc="cache connear features") as progress:
         for index, path in enumerate(data_list):
             if feature_cache_dir is not None:
                 cache_path = get_feature_cache_path(
@@ -498,7 +499,12 @@ def init_cache(
     return cache
 
 
-def get_loader(data_list: list[str], config: Config, train: bool = True) -> DataLoader:
+def get_loader(
+    data_list: list[str],
+    config: Config,
+    train: bool = True,
+    split_name: str | None = None,
+) -> DataLoader:
     """Creates dataloaders for training, validation and testing.
 
     Args:
@@ -509,19 +515,40 @@ def get_loader(data_list: list[str], config: Config, train: bool = True) -> Data
         dataloader (DataLoader): DataLoader wrapper for training/validation/test data.
     """
 
+    split = split_name or ("train" if train else "eval")
+    audio_settings = config["hparams"]["audio"]
+    feature_type = get_feature_type(audio_settings)
+    feature_cache_dir = (
+        config["exp"].get("feature_cache_dir")
+        if config["exp"].get("feature_cache", False)
+        else None
+    )
+    cache_message = (
+        f"Preparing {split} dataset: samples={len(data_list)}, "
+        f"feature_type={feature_type}, cache={config['exp']['cache']}, "
+        f"feature_cache={bool(feature_cache_dir)}, "
+        f"num_workers={config['exp']['n_workers']}, "
+        f"batch_size={config['hparams']['batch_size']}."
+    )
+    if feature_type == "connear":
+        cache_message += (
+            f" connear_device={audio_settings.get('connear_device', 'cpu')}, "
+            f"connear_batch_size={audio_settings.get('connear_batch_size', 4)}."
+        )
+    log_event(cache_message, config)
+
     with open(config["label_map"], "r") as f:
         label_map = json.load(f)
 
     dataset = GoogleSpeechDataset(
         data_list=data_list,
         label_map=label_map,
-        audio_settings=config["hparams"]["audio"],
+        audio_settings=audio_settings,
         aug_settings=config["hparams"]["augment"] if train else None,
         cache=config["exp"]["cache"],
-        feature_cache_dir=config["exp"].get("feature_cache_dir")
-        if config["exp"].get("feature_cache", False)
-        else None,
+        feature_cache_dir=feature_cache_dir,
     )
+    log_event(f"Prepared {split} dataset with {len(dataset)} samples.", config)
 
     dataloader = DataLoader(
         dataset,

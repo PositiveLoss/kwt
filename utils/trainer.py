@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from utils.checkpoint import checkpoint_path
-from utils.misc import log, save_model
+from utils.misc import log, log_event, save_model
 from utils.scheduler import WarmUpLR
 from utils.types import Config
 
@@ -129,12 +129,19 @@ def train(
     ############################
     net.train()
     optimizer.zero_grad(set_to_none=True)
+    log_event(
+        f"Training loop started on {device}: epochs={config['hparams']['n_epochs']}, "
+        f"train_batches={len(trainloader)}, val_batches={len(valloader)}, "
+        f"grad_accum_steps={grad_accum_steps}.",
+        config,
+    )
 
     for epoch in range(config["hparams"]["n_epochs"]):
         t0 = time.time()
         running_loss = 0.0
         correct = 0
         n_batches = len(trainloader)
+        log_event(f"Epoch {epoch} started.", config)
 
         for batch_index, (data, targets) in enumerate(trainloader):
             active_scheduler = None
@@ -196,25 +203,45 @@ def train(
             "avg_loss_per_ep": running_loss / len(trainloader),
         }
         log(log_dict, step, config)
+        log_event(
+            f"Epoch {epoch} finished in {log_dict['time_per_epoch']:.2f}s.",
+            config,
+        )
 
         if not epoch % config["exp"]["val_freq"]:
+            log_event(f"Validation started for epoch {epoch}.", config)
             val_acc, avg_val_loss = evaluate(net, criterion, valloader, device)
             log_dict = {"epoch": epoch, "val_loss": avg_val_loss, "val_acc": val_acc}
             log(log_dict, step, config)
+            log_event(
+                f"Validation finished for epoch {epoch}: "
+                f"val_loss={avg_val_loss:.6f}, val_acc={val_acc:.6f}.",
+                config,
+            )
 
             # save best val ckpt
             if val_acc > best_acc:
                 best_acc = val_acc
                 save_path = checkpoint_path(config["exp"]["save_dir"], "best")
+                log_event(
+                    f"New best validation accuracy {best_acc:.6f}; saving checkpoint.",
+                    config,
+                )
                 save_model(epoch, val_acc, save_path, net, optimizer, log_file)
 
     ###########################
     # training complete
     ###########################
 
+    log_event("Final validation started.", config)
     val_acc, avg_val_loss = evaluate(net, criterion, valloader, device)
     log_dict = {"epoch": epoch, "val_loss": avg_val_loss, "val_acc": val_acc}
     log(log_dict, step, config)
+    log_event(
+        f"Final validation finished: val_loss={avg_val_loss:.6f}, "
+        f"val_acc={val_acc:.6f}.",
+        config,
+    )
 
     # save final ckpt
     save_path = checkpoint_path(config["exp"]["save_dir"], "last")

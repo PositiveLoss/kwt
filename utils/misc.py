@@ -2,6 +2,7 @@
 
 import os
 import random
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -83,6 +84,33 @@ def log(log_dict: dict[str, Any], step: int, config: Config) -> None:
     # show logs in stdout
     if config["exp"]["log_to_stdout"]:
         print(log_message)
+
+
+def log_event(
+    message: str,
+    config: Config | None = None,
+    log_file: str | None = None,
+) -> None:
+    """Write a timestamped training event to stdout and the run log file."""
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_message = f"[{timestamp}] {message}"
+
+    if config is None or config["exp"].get("log_to_stdout", True):
+        print(log_message)
+
+    target_log_file = log_file
+    if (
+        target_log_file is None
+        and config is not None
+        and config["exp"].get("log_to_file", False)
+        and "save_dir" in config["exp"]
+    ):
+        target_log_file = os.path.join(config["exp"]["save_dir"], "training_log.txt")
+
+    if target_log_file is not None:
+        with open(target_log_file, "a+") as f:
+            f.write(log_message + "\n")
 
 
 def get_model(model_config: dict[str, Any]) -> nn.Module:

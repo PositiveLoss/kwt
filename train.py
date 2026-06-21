@@ -1,6 +1,7 @@
 import math
 import os
 import json
+import time
 from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
 
@@ -12,7 +13,14 @@ from torch import nn
 from utils.checkpoint import checkpoint_path, load_checkpoint
 from utils.dataset import get_loader, get_train_val_test_split, warm_loader_cache
 from utils.loss import LabelSmoothingLoss
-from utils.misc import calc_step, count_params, get_model, log, seed_everything
+from utils.misc import (
+    calc_step,
+    count_params,
+    get_model,
+    log,
+    log_event,
+    seed_everything,
+)
 from utils.opt import get_optimizer
 from utils.scheduler import WarmUpLR, get_scheduler
 from utils.trainer import evaluate, train
@@ -71,6 +79,7 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         config["exp"]["exp_dir"], config["exp"]["exp_name"]
     )
     os.makedirs(config["exp"]["save_dir"], exist_ok=True)
+    log_event(f"Run directory: {config['exp']['save_dir']}", config)
 
     ######################################
     # save hyperparameters for current run
@@ -81,26 +90,52 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
 
     with open(os.path.join(config["exp"]["save_dir"], "settings.txt"), "w+") as f:
         f.write(config_str)
+    log_event("Saved resolved settings.", config)
 
     #####################################
     # initialize training items
     #####################################
 
     # data
+    t0 = time.perf_counter()
+    log_event("Loading train/validation file lists.", config)
     with open(config["train_list_file"], "r") as f:
-        train_list = f.read().rstrip().split("\n")
+        train_list = [line for line in f.read().rstrip().split("\n") if line]
 
     with open(config["val_list_file"], "r") as f:
-        val_list = f.read().rstrip().split("\n")
+        val_list = [line for line in f.read().rstrip().split("\n") if line]
+    log_event(
+        f"Loaded file lists: train={len(train_list)}, val={len(val_list)} "
+        f"in {time.perf_counter() - t0:.2f}s.",
+        config,
+    )
 
-    trainloader = get_loader(train_list, config, train=True)
-    valloader = get_loader(val_list, config, train=False)
+    t0 = time.perf_counter()
+    log_event("Building train dataloader.", config)
+    trainloader = get_loader(train_list, config, train=True, split_name="train")
+    log_event(
+        f"Built train dataloader: batches={len(trainloader)} "
+        f"in {time.perf_counter() - t0:.2f}s.",
+        config,
+    )
+
+    t0 = time.perf_counter()
+    log_event("Building validation dataloader.", config)
+    valloader = get_loader(val_list, config, train=False, split_name="val")
+    log_event(
+        f"Built validation dataloader: batches={len(valloader)} "
+        f"in {time.perf_counter() - t0:.2f}s.",
+        config,
+    )
 
     if config["exp"].get("warm_cache", False):
+        log_event("Warming train and validation dataloaders.", config)
         warm_loader_cache(trainloader, "train")
         warm_loader_cache(valloader, "val")
+        log_event("Finished dataloader warmup.", config)
 
     # model
+    log_event("Creating model.", config)
     model = get_model(config["hparams"]["model"])
 
     if fine_tune:
@@ -113,7 +148,11 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
 
     model = model.to(config["hparams"]["device"])
 
-    print(f"Created model with {count_params(model)} parameters.")
+    log_event(
+        f"Created model with {count_params(model)} parameters on "
+        f"{config['hparams']['device']}.",
+        config,
+    )
 
     # loss
     if config["hparams"]["l_smooth"]:
@@ -126,6 +165,9 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
 
     # optimizer
     optimizer = get_optimizer(model, config["hparams"]["optimizer"])
+    log_event(
+        f"Created optimizer: {config['hparams']['optimizer']['opt_type']}.", config
+    )
 
     # lr scheduler
     schedulers = {"warmup": None, "scheduler": None}
@@ -152,22 +194,40 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         schedulers["scheduler"] = get_scheduler(
             optimizer, config["hparams"]["scheduler"]["scheduler_type"], total_iters
         )
+    log_event(
+        "Schedulers configured: "
+        f"warmup={schedulers['warmup'] is not None}, "
+        f"scheduler={config['hparams']['scheduler']['scheduler_type']}.",
+        config,
+    )
 
     #####################################
     # Training Run
     #####################################
 
-    print("Initiating training.")
+    log_event(
+        f"Initiating training for {config['hparams']['n_epochs']} epochs "
+        f"({len(trainloader)} batches/epoch).",
+        config,
+    )
     train(model, optimizer, criterion, trainloader, valloader, schedulers, config)
+    log_event("Training loop finished.", config)
 
     #####################################
     # Final Test
     #####################################
 
     with open(config["test_list_file"], "r") as f:
-        test_list = f.read().rstrip().split("\n")
+        test_list = [line for line in f.read().rstrip().split("\n") if line]
 
-    testloader = get_loader(test_list, config, train=False)
+    t0 = time.perf_counter()
+    log_event(f"Building test dataloader for {len(test_list)} files.", config)
+    testloader = get_loader(test_list, config, train=False, split_name="test")
+    log_event(
+        f"Built test dataloader: batches={len(testloader)} "
+        f"in {time.perf_counter() - t0:.2f}s.",
+        config,
+    )
     if config["exp"].get("warm_cache", False):
         warm_loader_cache(testloader, "test")
 
@@ -176,6 +236,7 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
     )
 
     # evaluating the final state (last.safetensors)
+    log_event("Evaluating final model state on test split.", config)
     test_acc, test_loss = evaluate(
         model, criterion, testloader, config["hparams"]["device"]
     )
@@ -183,13 +244,15 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
     log(log_dict, final_step, config)
 
     # evaluating the best validation state (best.safetensors)
+    log_event("Loading best validation checkpoint for test evaluation.", config)
     ckpt = load_checkpoint(
         checkpoint_path(config["exp"]["save_dir"], "best"),
         map_location=config["hparams"]["device"],
     )
     model.load_state_dict(ckpt["model_state_dict"])
-    print("Best ckpt loaded.")
+    log_event("Best checkpoint loaded.", config)
 
+    log_event("Evaluating best validation checkpoint on test split.", config)
     test_acc, test_loss = evaluate(
         model, criterion, testloader, config["hparams"]["device"]
     )
