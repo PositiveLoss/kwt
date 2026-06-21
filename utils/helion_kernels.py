@@ -8,6 +8,7 @@ import importlib.util
 import math
 import os
 import platform
+import warnings
 from typing import Any
 
 import torch
@@ -63,21 +64,51 @@ else:
     _helion_gelu_forward = None
     _helion_gelu_backward = None
 
+_helion_disabled_reason: str | None = None
+
+
+def _disable_helion(reason: BaseException) -> None:
+    global _helion_disabled_reason
+    if _helion_disabled_reason is not None:
+        return
+
+    _helion_disabled_reason = f"{type(reason).__name__}: {reason}"
+    warnings.warn(
+        "Helion GELU failed and will be disabled for this process. "
+        f"Falling back to torch.nn.functional.gelu. Reason: {_helion_disabled_reason}",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
 
 class _HelionGELUFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx: Any, x: torch.Tensor) -> torch.Tensor:
         ctx.save_for_backward(x)
-        if _can_compile_helion(x) and _helion_gelu_forward is not None:
-            return _helion_gelu_forward(x)
+        if (
+            _helion_disabled_reason is None
+            and _can_compile_helion(x)
+            and _helion_gelu_forward is not None
+        ):
+            try:
+                return _helion_gelu_forward(x)
+            except Exception as exc:
+                _disable_helion(exc)
         return F.gelu(x)
 
     @staticmethod
     def backward(ctx: Any, *grad_outputs: torch.Tensor) -> tuple[torch.Tensor]:
         grad_output = grad_outputs[0]
         (x,) = ctx.saved_tensors
-        if _can_compile_helion(x) and _helion_gelu_backward is not None:
-            return (_helion_gelu_backward(grad_output, x),)
+        if (
+            _helion_disabled_reason is None
+            and _can_compile_helion(x)
+            and _helion_gelu_backward is not None
+        ):
+            try:
+                return (_helion_gelu_backward(grad_output, x),)
+            except Exception as exc:
+                _disable_helion(exc)
 
         x = x.detach().requires_grad_(True)
         with torch.enable_grad():
