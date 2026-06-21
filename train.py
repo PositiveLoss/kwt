@@ -1,5 +1,6 @@
 import math
 import os
+import json
 from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
 
@@ -9,7 +10,7 @@ import yaml
 from config_parser import get_config
 from torch import nn
 
-from utils.dataset import get_loader, warm_loader_cache
+from utils.dataset import get_loader, get_train_val_test_split, warm_loader_cache
 from utils.loss import LabelSmoothingLoss
 from utils.misc import calc_step, count_params, get_model, log, seed_everything
 from utils.opt import get_optimizer
@@ -18,12 +19,54 @@ from utils.trainer import evaluate, train
 from utils.types import Config
 
 
+def ensure_data_lists(config: Config) -> None:
+    data_root = config["data_root"]
+    train_file = config["train_list_file"]
+    val_file = config["val_list_file"]
+    test_file = config["test_list_file"]
+    label_map_file = config["label_map"]
+
+    if not os.path.isdir(data_root):
+        raise FileNotFoundError(
+            f"Dataset root {data_root!r} does not exist. "
+            f"Download Speech Commands V2 first with: ./download_gspeech_v2.sh {data_root}"
+        )
+
+    if os.path.exists(train_file) and os.path.exists(label_map_file):
+        return
+
+    if not os.path.exists(val_file) or not os.path.exists(test_file):
+        raise FileNotFoundError(
+            "Missing split files. Expected validation/test split files at "
+            f"{val_file!r} and {test_file!r}."
+        )
+
+    print("Missing derived training split or label map; generating data lists.")
+    train_list, val_list, test_list, label_map = get_train_val_test_split(
+        data_root, val_file, test_file
+    )
+
+    for path in (train_file, val_file, test_file, label_map_file):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    with open(train_file, "w+") as f:
+        f.write("\n".join(train_list))
+    with open(val_file, "w+") as f:
+        f.write("\n".join(val_list))
+    with open(test_file, "w+") as f:
+        f.write("\n".join(test_list))
+    with open(label_map_file, "w+") as f:
+        json.dump(label_map, f)
+
+
 def training_pipeline(config: Config, fine_tune: bool = False) -> None:
     """Initiates and executes all the steps involved with model training.
 
     Args:
         config (dict) - Dict containing various settings for the training run.
     """
+    ensure_data_lists(config)
+
     config["exp"]["save_dir"] = os.path.join(
         config["exp"]["exp_dir"], config["exp"]["exp_name"]
     )
@@ -180,7 +223,10 @@ def main(args: Namespace) -> None:
 
     config = get_config(args.conf, device=args.device)
     seed_everything(config["hparams"]["seed"])
-    run_with_trackio(config, lambda: training_pipeline(config))
+    try:
+        run_with_trackio(config, lambda: training_pipeline(config))
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 if __name__ == "__main__":

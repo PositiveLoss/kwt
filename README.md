@@ -19,13 +19,13 @@ To download the Google Speech Commands V2 dataset, you may run the provided bash
 
 ## Training
 
-The Speech Commands V2 dataset provides a "validation_list.txt" file and a "testing_list.txt" file. Run:
+The Speech Commands V2 dataset provides a "validation_list.txt" file and a "testing_list.txt" file. `train.py` will generate `training_list.txt`, `validation_list.txt`, `testing_list.txt`, and `label_map.json` automatically if they are missing. You can also create them manually with:
 
 ```
 python make_data_list.py -v <path/to/validation_list.txt> -t <path/to/testing_list.txt> -d <path/to/dataset/root> -o <output dir>
 ```
 
-This will create the files `training_list.txt`, `validation_list.txt`, `testing_list.txt` and `label_map.json` at the specified output dir. 
+This will create the files `training_list.txt`, `validation_list.txt`, `testing_list.txt`, and `label_map.json` at the specified output dir.
 
 Running `train.py` is fairly straightforward. Only a path to a config file is required. Inside the config file, you'll need to add the paths to the .txt files and the label_map.json file created above.
 
