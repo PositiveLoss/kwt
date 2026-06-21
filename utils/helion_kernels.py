@@ -43,9 +43,11 @@ if helion is not None and hl is not None:
     @helion.kernel(autotune_effort="none", static_shapes=False)
     def _helion_gelu_forward(x: torch.Tensor) -> torch.Tensor:
         out = torch.empty_like(x)
+        x_flat = x.reshape(-1)
+        out_flat = out.reshape(-1)
         for tile in hl.tile(x.numel()):
-            vals = x[tile]
-            out[tile] = vals * 0.5 * (1.0 + torch.erf(vals / SQRT_2))
+            vals = x_flat[tile]
+            out_flat[tile] = vals * 0.5 * (1.0 + torch.erf(vals / SQRT_2))
         return out
 
     @helion.kernel(autotune_effort="none", static_shapes=False)
@@ -53,11 +55,14 @@ if helion is not None and hl is not None:
         grad_output: torch.Tensor, x: torch.Tensor
     ) -> torch.Tensor:
         grad_input = torch.empty_like(x)
+        x_flat = x.reshape(-1)
+        grad_output_flat = grad_output.reshape(-1)
+        grad_input_flat = grad_input.reshape(-1)
         for tile in hl.tile(x.numel()):
-            vals = x[tile]
+            vals = x_flat[tile]
             cdf = 0.5 * (1.0 + torch.erf(vals / SQRT_2))
             pdf_term = vals * INV_SQRT_2PI * torch.exp(-0.5 * vals * vals)
-            grad_input[tile] = grad_output[tile] * (cdf + pdf_term)
+            grad_input_flat[tile] = grad_output_flat[tile] * (cdf + pdf_term)
         return grad_input
 
 else:
