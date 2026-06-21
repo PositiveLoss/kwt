@@ -171,33 +171,42 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
 
     # lr scheduler
     schedulers = {"warmup": None, "scheduler": None}
+    scheduler_config = config["hparams"]["scheduler"]
+    scheduler_type = scheduler_config["scheduler_type"]
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
     if grad_accum_steps < 1:
         raise ValueError("hparams.grad_accum_steps must be >= 1.")
     optimizer_steps_per_epoch = math.ceil(len(trainloader) / grad_accum_steps)
 
-    if config["hparams"]["scheduler"]["n_warmup"]:
+    if scheduler_type == "one_cycle_lr" and scheduler_config.get("n_warmup", 0):
+        log_event(
+            "Ignoring scheduler.n_warmup because one_cycle_lr includes warmup "
+            "via scheduler.pct_start.",
+            config,
+        )
+    elif scheduler_config["n_warmup"]:
         schedulers["warmup"] = WarmUpLR(
             optimizer,
-            total_iters=optimizer_steps_per_epoch
-            * config["hparams"]["scheduler"]["n_warmup"],
+            total_iters=optimizer_steps_per_epoch * scheduler_config["n_warmup"],
         )
 
-    if config["hparams"]["scheduler"]["scheduler_type"] is not None:
-        total_iters = optimizer_steps_per_epoch * max(
-            1,
-            (
-                config["hparams"]["scheduler"]["max_epochs"]
-                - config["hparams"]["scheduler"]["n_warmup"]
-            ),
-        )
+    if scheduler_type is not None:
+        if scheduler_type == "one_cycle_lr":
+            total_iters = optimizer_steps_per_epoch * scheduler_config["max_epochs"]
+        else:
+            total_iters = optimizer_steps_per_epoch * max(
+                1,
+                (scheduler_config["max_epochs"] - scheduler_config["n_warmup"]),
+            )
         schedulers["scheduler"] = get_scheduler(
-            optimizer, config["hparams"]["scheduler"]["scheduler_type"], total_iters
+            optimizer,
+            scheduler_config,
+            total_iters,
         )
     log_event(
         "Schedulers configured: "
         f"warmup={schedulers['warmup'] is not None}, "
-        f"scheduler={config['hparams']['scheduler']['scheduler_type']}.",
+        f"scheduler={scheduler_type}.",
         config,
     )
 

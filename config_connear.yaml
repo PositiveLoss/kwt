@@ -13,7 +13,7 @@ exp:
     proj_name: torch-kwt-connear
     exp_dir: ./runs
     exp_name: exp-connear-0.0.1
-    device: auto
+    device: cuda
     log_freq: 20
     log_to_file: True
     log_to_stdout: True
@@ -68,18 +68,23 @@ hparams:
         emb_dropout: 0.1
         pre_norm: False
         use_sdpa: True
-        use_helion_kernels: False
+        use_helion_kernels: True
 
     optimizer:
-        opt_type: adamw
+        opt_type: adamw_fused
         opt_kwargs:
           lr: 0.001
           weight_decay: 0.1
 
     scheduler:
-        n_warmup: 10
+        n_warmup: 0
         max_epochs: 140
-        scheduler_type: cosine_annealing
+        scheduler_type: one_cycle_lr
+        max_lr: 0.001
+        pct_start: 0.1
+        div_factor: 25.0
+        final_div_factor: 10000.0
+        anneal_strategy: cos
 
     augment:
         resample:

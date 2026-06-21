@@ -109,16 +109,21 @@ hparams:
 hparams:
     ...
     ...
-    optimizer:               # AdamW with an lr of 0.001 and weight decay of 0.1, as in the original paper.
-        opt_type: adamw      # Please modify get_optimizer() in utils/opt.py if you want to add support for more optimizer variants.
+    optimizer:               # AdamW with an lr of 0.001 and weight decay of 0.1.
+        opt_type: adamw_fused # One of adamw, adamw_fused, or radam. adamw_fused uses fused AdamW on CUDA and falls back elsewhere.
         opt_kwargs:
           lr: 0.001
           weight_decay: 0.1
     
-    scheduler:               # Warmup scheduling for 10 epochs and cosine annealing, as in the original paper.
-        n_warmup: 10         # Please modify get_scheduler() in utils/scheduler.py if you want to add support for other scheduling techniques.
-        max_epochs: 140      # Up to which epoch the normal scheduler will be run.
-        scheduler_type: cosine_annealing
+    scheduler:               # OneCycleLR reaches useful learning rates faster than long external warmup.
+        n_warmup: 0          # External warmup. Keep 0 for one_cycle_lr; use >0 with cosine_annealing.
+        max_epochs: 140      # Total epochs used to compute scheduler steps.
+        scheduler_type: one_cycle_lr # One of one_cycle_lr or cosine_annealing.
+        max_lr: 0.001        # Peak OneCycle learning rate.
+        pct_start: 0.1       # Fraction of total steps spent increasing LR.
+        div_factor: 25.0     # Initial LR is max_lr / div_factor.
+        final_div_factor: 10000.0 # Final LR is initial_lr / final_div_factor.
+        anneal_strategy: cos  # OneCycle annealing shape.
 ```
 
 ### Augmentation
