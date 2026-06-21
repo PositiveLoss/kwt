@@ -76,7 +76,7 @@ hparams:
         connear_device: auto   # Device used by the feature extractor. Auto checks cuda, then mps, then cpu.
         connear_sr: 20000      # CoNNear model sample rate. Speech Commands audio is resampled internally.
         connear_batch_size: 4   # Batch size used while precomputing CoNNear features with exp.cache: 2.
-        connear_n_channels: 40 # Number of CoNNear channels after downsampling from the model's 201 channels.
+        connear_n_channels: 201 # Number of CoNNear channels to keep. Use 201 for all pretrained channels.
         connear_log_scale: 1000000.0 # Multiplier before log1p(abs(feature)).
         connear_normalize: True # Per-sample feature-map standardization.
         connear_input_scale: 1.0 # Optional waveform amplitude scale before CoNNear.
@@ -90,8 +90,8 @@ hparams:
     ...
     model:
         name: kwt-1          # If name is provided, will look for named model (e.g. kwt-1, kwt-2, kwt-3) and will ignore below parameters.
-        input_res: [40, 98]  # Shape of input spectrogram (n_mels x T)
-        patch_res: [40, 1]   # Resolution of patches
+        input_res: [40, 98]  # Shape of input feature map (feature bins x T). Use [201, 98] for full CoNNear.
+        patch_res: [40, 1]   # Resolution of patches. Use [201, 1] for full CoNNear.
         num_classes: 35      # Number of classes
         mlp_dim: 768         # mlp_dim, dim, heads, depth are all parameters which construct the model.
         dim: 192             # You may refer to the original paper and change these around to form KWT-1, KWT-2 and KWT-3. The settings to 
