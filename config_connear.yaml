@@ -1,4 +1,4 @@
-# sample config
+# sample config using pretrained CoNNear cochlea features
 
 data_root: ./data/
 train_list_file: ./data/training_list.txt
@@ -10,21 +10,20 @@ exp:
     trackio: False
     trackio_space_id:
     trackio_server_url:
-    proj_name: torch-kwt-1
+    proj_name: torch-kwt-connear
     exp_dir: ./runs
-    exp_name: exp-0.0.1
+    exp_name: exp-connear-0.0.1
     device: auto
-    log_freq: 20    # log every l_f steps
+    log_freq: 20
     log_to_file: True
     log_to_stdout: True
     warm_cache: False
-    val_freq: 5    # validate every v_f epochs
+    val_freq: 5
     n_workers: 1
     pin_memory: True
-    cache: 2 # 0 -> no cache | 1 -> cache wavs | 2 -> cache specs; stops wav augments
+    cache: 2
     feature_cache: False
-    feature_cache_dir: ./data/.feature_cache
-    
+    feature_cache_dir: ./data/.feature_cache_connear
 
 hparams:
     seed: 0
@@ -34,7 +33,7 @@ hparams:
     l_smooth: 0.1
 
     audio:
-        feature_type: mfcc
+        feature_type: connear
         feature_time_bins: 98
         sr: 16000
         n_mels: 40
@@ -47,15 +46,15 @@ hparams:
         coch_high_freq: 8000.0
         connear_weights_path: ./data/connear/Gmodel.pt
         connear_auto_download: False
-        connear_device: cpu
+        connear_device: mps
         connear_sr: 20000
         connear_n_channels: 40
         connear_log_scale: 1000000.0
         connear_normalize: True
         connear_input_scale: 1.0
-    
+
     model:
-        name: # if name is provided below settings will be ignored during model creation   
+        name:
         input_res: [40, 98]
         patch_res: [40, 1]
         num_classes: 35
@@ -74,7 +73,7 @@ hparams:
         opt_kwargs:
           lr: 0.001
           weight_decay: 0.1
-    
+
     scheduler:
         n_warmup: 10
         max_epochs: 140
@@ -84,7 +83,7 @@ hparams:
         resample:
             r_min: 0.85
             r_max: 1.15
-        
+
         time_shift:
             s_min: -0.1
             s_max: 0.1

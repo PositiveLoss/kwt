@@ -41,11 +41,18 @@ For cochleagram features, use the provided alternate config:
 python train.py --conf config_cochleagram.yaml
 ```
 
+For CoNNear cochlea features, download the pretrained CoNNear weights once and use the provided alternate config:
+
+```
+uv run python download_connear_model.py
+python train.py --conf config_connear.yaml
+```
+
 Set `exp.warm_cache: True` to iterate the train, validation, and test dataloaders once before they are used. This warms preprocessing, worker, and OS file caches inside the training process.
 
-Set `exp.feature_cache: True` to persist deterministic MFCC feature extraction under `exp.feature_cache_dir` and reuse it across runs. Feature caching skips waveform-level augmentation because it loads MFCCs directly; `spec_aug` still runs on cached features during training.
+Set `exp.feature_cache: True` to persist deterministic feature extraction under `exp.feature_cache_dir` and reuse it across runs. Feature caching skips waveform-level augmentation because it loads features directly; `spec_aug` still runs on cached features during training.
 
-Feature extraction uses [spafe-rs](https://github.com/RustedBytes/spafe). Set `hparams.audio.feature_type` to `mfcc` or `cochleagram`; the default cochleagram settings keep the model input shape at `40 x 98`.
+MFCC and cochleagram extraction use [spafe-rs](https://github.com/RustedBytes/spafe). Set `hparams.audio.feature_type` to `mfcc`, `cochleagram`, or `connear`; the provided alternate configs keep the model input shape at `40 x 98`. CoNNear uses the pretrained PyTorch model from [PositiveLoss/CoNNear_cochlea-PyTorch](https://github.com/PositiveLoss/CoNNear_cochlea-PyTorch).
 
 Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple dataloader batches before each optimizer update. The effective batch size is `batch_size * grad_accum_steps`.
 

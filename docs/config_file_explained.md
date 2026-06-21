@@ -32,9 +32,9 @@ exp:
     val_freq: 1                            # Validate every val_freq epochs
     n_workers: 1                           # Number of workers for dataloader
     pin_memory: True                       # Pin memory argument for dataloader
-    cache: 2                               # 0 -> no cache | 1 -> cache wav arrays | 2 -> cache MFCCs (and also prevents wav augmentations like time_shift,
+    cache: 2                               # 0 -> no cache | 1 -> cache wav arrays | 2 -> cache extracted features (and also prevents wav augmentations like time_shift,
                                            # resampling and add_background_noise)
-    feature_cache: False                   # Persist deterministic MFCC features as .npy files across runs.
+    feature_cache: False                   # Persist deterministic extracted features as .npy files across runs.
     feature_cache_dir: ./data/.feature_cache # Directory for feature_cache files.
 ```
 
@@ -60,7 +60,7 @@ hparams:
     ...
     ...
     audio:
-        feature_type: mfcc    # Feature extractor, either "mfcc" or "cochleagram".
+        feature_type: mfcc    # Feature extractor, one of "mfcc", "cochleagram", or "connear".
         feature_time_bins: 98 # Optional time-axis size after extraction. Keeps model input_res width stable.
         sr: 16000            # sampling rate
         n_mels: 40           # number of MFCC coefficients, or output cochleagram rows with default coch_filter_n.
@@ -71,6 +71,14 @@ hparams:
         coch_filter_n: 38     # Cochleagram filter count. spafe-rs returns filter_n + 2 rows, so 38 gives 40 rows.
         coch_low_freq: 50.0   # Cochleagram lower frequency limit.
         coch_high_freq: 8000.0 # Cochleagram upper frequency limit, capped at sr / 2.
+        connear_weights_path: ./data/connear/Gmodel.pt # Pretrained PyTorch CoNNear weights.
+        connear_auto_download: False # If True, download missing CoNNear weights from GitHub during extraction.
+        connear_device: cpu    # Device used by the feature extractor. CPU is safest with dataloader workers.
+        connear_sr: 20000      # CoNNear model sample rate. Speech Commands audio is resampled internally.
+        connear_n_channels: 40 # Number of CoNNear channels after downsampling from the model's 201 channels.
+        connear_log_scale: 1000000.0 # Multiplier before log1p(abs(feature)).
+        connear_normalize: True # Per-sample feature-map standardization.
+        connear_input_scale: 1.0 # Optional waveform amplitude scale before CoNNear.
 ```
 
 ### Model Settings

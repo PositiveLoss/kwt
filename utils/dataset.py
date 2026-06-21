@@ -15,9 +15,10 @@ from tqdm import tqdm
 
 from utils.audio import fix_length, load_audio
 from utils.augment import BackgroundNoiseAdder, time_shift, resample, spec_augment
+from utils.connear import CONNEAR_WEIGHTS_URL, extract_connear_channels
 from utils.types import Config
 
-FEATURE_CACHE_VERSION = 4
+FEATURE_CACHE_VERSION = 5
 
 
 def get_train_val_test_split(
@@ -214,9 +215,11 @@ def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarra
         features = extract_mfcc_spafe(x, audio_settings)
     elif feature_type == "cochleagram":
         features = extract_cochleagram_spafe(x, audio_settings)
+    elif feature_type == "connear":
+        features = extract_connear(x, audio_settings)
     else:
         raise ValueError(
-            "hparams.audio.feature_type must be one of mfcc or cochleagram."
+            "hparams.audio.feature_type must be one of mfcc, cochleagram, or connear."
         )
     return resize_feature_time(features, audio_settings.get("feature_time_bins"))
 
@@ -263,6 +266,52 @@ def extract_cochleagram_spafe(
     return np.asarray(output.cochleagram, dtype=np.float32)
 
 
+def extract_connear(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
+    features = extract_connear_channels(
+        x,
+        sr=int(audio_settings["sr"]),
+        weights_path=str(
+            audio_settings.get("connear_weights_path", "./data/connear/Gmodel.pt")
+        ),
+        device=str(audio_settings.get("connear_device", "cpu")),
+        auto_download=bool(audio_settings.get("connear_auto_download", False)),
+        model_sr=int(audio_settings.get("connear_sr", 20_000)),
+        input_scale=float(audio_settings.get("connear_input_scale", 1.0)),
+    )
+
+    features = np.log1p(
+        np.abs(features) * float(audio_settings.get("connear_log_scale", 1_000_000.0))
+    )
+    target_channels = audio_settings.get("connear_n_channels")
+    if target_channels is None:
+        target_channels = audio_settings["n_mels"]
+    features = resize_feature_axis(features, int(target_channels), axis=0)
+    if audio_settings.get("connear_normalize", True):
+        features = (features - features.mean()) / (features.std() + 1e-6)
+    return features.astype(np.float32, copy=False)
+
+
+def resize_feature_axis(
+    features: np.ndarray, feature_axis_bins: Any | None, axis: int
+) -> np.ndarray:
+    if feature_axis_bins is None:
+        return features
+
+    target_size = int(feature_axis_bins)
+    if target_size <= 0 or features.shape[axis] == target_size:
+        return features
+
+    moved = np.moveaxis(features, axis, 0)
+    old_positions = np.linspace(0.0, 1.0, num=moved.shape[0])
+    new_positions = np.linspace(0.0, 1.0, num=target_size)
+    flat = moved.reshape(moved.shape[0], -1)
+    resized_flat = np.empty((target_size, flat.shape[1]), dtype=np.float32)
+    for index in range(flat.shape[1]):
+        resized_flat[:, index] = np.interp(new_positions, old_positions, flat[:, index])
+    resized = resized_flat.reshape((target_size, *moved.shape[1:]))
+    return np.moveaxis(resized, 0, axis)
+
+
 def resize_feature_time(
     features: np.ndarray, feature_time_bins: Any | None
 ) -> np.ndarray:
@@ -281,7 +330,12 @@ def resize_feature_time(
 
 def get_feature_cache_settings(audio_settings: dict[str, Any]) -> dict[str, Any]:
     cache_settings = dict(audio_settings)
-    cache_settings["feature_backend"] = f"spafe-rs:{get_feature_type(audio_settings)}"
+    feature_type = get_feature_type(audio_settings)
+    if feature_type == "connear":
+        cache_settings["connear_weights_url"] = CONNEAR_WEIGHTS_URL
+    cache_settings["feature_backend"] = (
+        "connear-pytorch" if feature_type == "connear" else f"spafe-rs:{feature_type}"
+    )
     return cache_settings
 
 

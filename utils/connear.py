@@ -1,0 +1,210 @@
+"""CoNNear cochlea feature extraction.
+
+The architecture mirrors the PyTorch CoNNear port published by
+PositiveLoss/CoNNear_cochlea-PyTorch.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from functools import lru_cache
+from pathlib import Path
+from urllib.request import urlretrieve
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
+
+from utils.audio import resample_audio
+
+CONNEAR_WEIGHTS_URL = (
+    "https://raw.githubusercontent.com/PositiveLoss/"
+    "CoNNear_cochlea-PyTorch/main/connear/Gmodel.pt"
+)
+CONTEXT_SAMPLES = 256
+KERNEL_SIZE = 64
+STRIDE = 2
+HIDDEN_CHANNELS = 128
+OUTPUT_CHANNELS = 201
+
+
+def _same_pad_1d(x: Tensor, kernel_size: int, stride: int) -> Tensor:
+    input_length = x.shape[-1]
+    output_length = (input_length + stride - 1) // stride
+    pad_total = max((output_length - 1) * stride + kernel_size - input_length, 0)
+    pad_left = pad_total // 2
+    pad_right = pad_total - pad_left
+    return F.pad(x, (pad_left, pad_right))
+
+
+class KerasSameConv1d(nn.Conv1d):
+    """Conv1d with TensorFlow/Keras same-padding semantics."""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, kernel_size: int, stride: int
+    ) -> None:
+        super().__init__(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=0,
+            bias=False,
+        )
+
+    def forward(self, input: Tensor) -> Tensor:
+        return super().forward(_same_pad_1d(input, self.kernel_size[0], self.stride[0]))
+
+
+class CoNNear(nn.Module):
+    """Pretrained CoNNear architecture for basilar-membrane displacement."""
+
+    def __init__(self, output_channels: int = OUTPUT_CHANNELS) -> None:
+        super().__init__()
+        self.enc1 = KerasSameConv1d(1, HIDDEN_CHANNELS, KERNEL_SIZE, STRIDE)
+        self.enc2 = KerasSameConv1d(
+            HIDDEN_CHANNELS, HIDDEN_CHANNELS, KERNEL_SIZE, STRIDE
+        )
+        self.enc3 = KerasSameConv1d(
+            HIDDEN_CHANNELS, HIDDEN_CHANNELS, KERNEL_SIZE, STRIDE
+        )
+        self.enc4 = KerasSameConv1d(
+            HIDDEN_CHANNELS, HIDDEN_CHANNELS, KERNEL_SIZE, STRIDE
+        )
+
+        self.dec1 = nn.ConvTranspose1d(
+            HIDDEN_CHANNELS,
+            HIDDEN_CHANNELS,
+            kernel_size=KERNEL_SIZE,
+            stride=STRIDE,
+            padding=31,
+            bias=False,
+        )
+        self.dec2 = nn.ConvTranspose1d(
+            HIDDEN_CHANNELS * 2,
+            HIDDEN_CHANNELS,
+            kernel_size=KERNEL_SIZE,
+            stride=STRIDE,
+            padding=31,
+            bias=False,
+        )
+        self.dec3 = nn.ConvTranspose1d(
+            HIDDEN_CHANNELS * 2,
+            HIDDEN_CHANNELS,
+            kernel_size=KERNEL_SIZE,
+            stride=STRIDE,
+            padding=31,
+            bias=False,
+        )
+        self.dec4 = nn.ConvTranspose1d(
+            HIDDEN_CHANNELS * 2,
+            output_channels,
+            kernel_size=KERNEL_SIZE,
+            stride=STRIDE,
+            padding=31,
+            bias=False,
+        )
+
+    def forward(self, x: Tensor, channels_last: bool = True) -> Tensor:
+        if channels_last:
+            x = x.transpose(1, 2)
+
+        c1 = self.enc1(x)
+        a1 = torch.tanh(c1)
+        c2 = self.enc2(a1)
+        a2 = torch.tanh(c2)
+        c3 = self.enc3(a2)
+        a3 = torch.tanh(c3)
+        c4 = self.enc4(a3)
+        x = torch.tanh(c4)
+
+        x = torch.tanh(self.dec1(x))
+        x = torch.cat([x, c3], dim=1)
+        x = torch.tanh(self.dec2(x))
+        x = torch.cat([x, c2], dim=1)
+        x = torch.tanh(self.dec3(x))
+        x = torch.cat([x, c1], dim=1)
+        x = self.dec4(x)
+        x = x[..., CONTEXT_SAMPLES:-CONTEXT_SAMPLES]
+
+        if channels_last:
+            x = x.transpose(1, 2)
+        return x
+
+
+def ensure_connear_weights(weights_path: str | Path, auto_download: bool) -> Path:
+    path = Path(weights_path)
+    if path.exists():
+        return path
+    if not auto_download:
+        raise FileNotFoundError(
+            f"CoNNear weights not found at {path}. Download them with "
+            "`uv run python download_connear_model.py` or set "
+            "hparams.audio.connear_auto_download: True."
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            if path.exists():
+                return path
+            time.sleep(0.25)
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        urlretrieve(CONNEAR_WEIGHTS_URL, tmp_path)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        if lock_path.exists():
+            lock_path.unlink()
+
+    return path
+
+
+@lru_cache(maxsize=4)
+def load_connear(weights_path: str, device: str = "cpu") -> CoNNear:
+    model = CoNNear()
+    state_dict = torch.load(weights_path, map_location=device, weights_only=True)
+    model.load_state_dict(state_dict)
+    model.to(torch.device(device))
+    model.eval()
+    return model
+
+
+def _pad_to_stride_multiple(x: np.ndarray, multiple: int = 16) -> np.ndarray:
+    remainder = x.shape[0] % multiple
+    if remainder == 0:
+        return x
+    return np.pad(x, (0, multiple - remainder))
+
+
+@torch.no_grad()
+def extract_connear_channels(
+    x: np.ndarray,
+    sr: int,
+    weights_path: str | Path,
+    device: str = "cpu",
+    auto_download: bool = False,
+    model_sr: int = 20_000,
+    input_scale: float = 1.0,
+) -> np.ndarray:
+    """Run CoNNear and return channels-first BM displacement features."""
+    path = ensure_connear_weights(weights_path, auto_download)
+    if sr != model_sr:
+        x = resample_audio(x, sr, model_sr)
+    x = _pad_to_stride_multiple(x.astype(np.float32, copy=False))
+    x = x * np.float32(input_scale)
+
+    model = load_connear(str(path), device)
+    batch = torch.from_numpy(x).to(torch.device(device)).float()[None, :, None]
+    output = model(batch, channels_last=True)[0]
+    return output.cpu().numpy().T.astype(np.float32, copy=False)
