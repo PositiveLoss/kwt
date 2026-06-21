@@ -37,6 +37,8 @@ Set `exp.warm_cache: True` to iterate the train, validation, and test dataloader
 
 Set `exp.feature_cache: True` to persist deterministic MFCC feature extraction under `exp.feature_cache_dir` and reuse it across runs. Feature caching skips waveform-level augmentation because it loads MFCCs directly; `spec_aug` still runs on cached features during training.
 
+MFCC extraction uses [spafe-rs](https://github.com/RustedBytes/spafe).
+
 Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple dataloader batches before each optimizer update. The effective batch size is `batch_size * grad_accum_steps`.
 
 Refer to the [example config](config.yaml) to see how the config file looks like, and see the [config explanation](docs/config_file_explained.md) for a complete rundown of the various config parameters.

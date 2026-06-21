@@ -6,12 +6,13 @@ import json
 from argparse import ArgumentParser, Namespace
 from typing import Any, TypeAlias, cast
 
-import librosa
 import numpy as np
 import torch
 from torch import nn
 
 from config_parser import get_config
+from utils.audio import load_audio
+from utils.dataset import extract_features
 from utils.device import resolve_device
 from utils.misc import get_model
 
@@ -21,10 +22,7 @@ WindowPrediction: TypeAlias = int | str | float | list[list[float | str]]
 def process_window(
     x: np.ndarray, sr: int, audio_settings: dict[str, Any]
 ) -> np.ndarray:
-    x = librosa.util.fix_length(x, size=sr)
-    x = librosa.feature.melspectrogram(y=x, **audio_settings)
-    x = librosa.feature.mfcc(S=librosa.power_to_db(x), n_mfcc=audio_settings["n_mels"])
-    return x
+    return extract_features(x, audio_settings)
 
 
 @torch.no_grad()
@@ -47,7 +45,7 @@ def get_clip_pred(
     audio_settings = config["hparams"]["audio"]
     sr = audio_settings["sr"]
     win_len, stride = int(win_len * sr), int(stride * sr)
-    x = librosa.load(audio_path, sr=sr)[0]
+    x = load_audio(audio_path, sr=sr)
 
     window_arrays: list[np.ndarray] = []
     result: list[list[float]] = []

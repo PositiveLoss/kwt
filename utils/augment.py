@@ -1,6 +1,45 @@
+import glob
+import os
+
 import numpy as np
 import numba as nb
-import librosa
+
+from utils.audio import fix_length, load_audio, resample_audio
+
+
+class BackgroundNoiseAdder:
+    def __init__(
+        self,
+        sounds_path: str,
+        min_snr_db: float = 3.0,
+        max_snr_db: float = 30.0,
+    ) -> None:
+        self.sound_paths = glob.glob(os.path.join(sounds_path, "*.wav"))
+        self.min_snr_db = min_snr_db
+        self.max_snr_db = max_snr_db
+
+    def __call__(self, samples: np.ndarray, sample_rate: int) -> np.ndarray:
+        if not self.sound_paths:
+            return samples
+
+        noise = load_audio(np.random.choice(self.sound_paths), sr=sample_rate)
+        if noise.shape[0] < samples.shape[0]:
+            repeats = int(np.ceil(samples.shape[0] / noise.shape[0]))
+            noise = np.tile(noise, repeats)
+        if noise.shape[0] > samples.shape[0]:
+            start = np.random.randint(0, noise.shape[0] - samples.shape[0] + 1)
+            noise = noise[start : start + samples.shape[0]]
+        noise = fix_length(noise, samples.shape[0])
+
+        signal_rms = np.sqrt(np.mean(samples * samples))
+        noise_rms = np.sqrt(np.mean(noise * noise))
+        if signal_rms == 0.0 or noise_rms == 0.0:
+            return samples
+
+        snr_db = np.random.uniform(self.min_snr_db, self.max_snr_db)
+        target_noise_rms = signal_rms / (10.0 ** (snr_db / 20.0))
+        mixed = samples + noise * (target_noise_rms / noise_rms)
+        return mixed.astype(np.float32)
 
 
 @nb.jit(nopython=True, cache=True)
@@ -45,7 +84,7 @@ def resample(
     """
 
     sr_new = sr * np.random.uniform(r_min, r_max)
-    x = librosa.resample(x, orig_sr=sr, target_sr=sr_new)
+    x = resample_audio(x, orig_sr=sr, target_sr=sr_new)
     return x, sr_new
 
 

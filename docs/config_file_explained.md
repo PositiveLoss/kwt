@@ -62,10 +62,9 @@ hparams:
     audio:
         sr: 16000            # sampling rate
         n_mels: 40           # number of mel bands for melspectrogram (and MFCC)
-        n_fft: 480           # n_fft, window length, hop length, center are also all args for calculating the melspectrogram.
-        win_length: 480      # Check the docs here for further explanation: 
-        hop_length: 160      # https://librosa.org/doc/main/generated/librosa.feature.melspectrogram.html#librosa.feature.melspectrogram
-        center: False        # MFCC conversion is currently done on CPU with librosa. May add in a CUDA MFCC conversion later (with nnAudio)
+        n_fft: 480           # FFT size used by spafe-rs MFCC extraction.
+        win_length: 480      # Window length in samples.
+        hop_length: 160      # Hop length in samples.
 ```
 
 ### Model Settings

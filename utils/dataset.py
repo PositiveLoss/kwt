@@ -7,17 +7,17 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
-import librosa
 import numpy as np
+import spafe
 import torch
-from audiomentations import AddBackgroundNoise
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from utils.augment import time_shift, resample, spec_augment
+from utils.audio import fix_length, load_audio
+from utils.augment import BackgroundNoiseAdder, time_shift, resample, spec_augment
 from utils.types import Config
 
-FEATURE_CACHE_VERSION = 1
+FEATURE_CACHE_VERSION = 3
 
 
 def get_train_val_test_split(
@@ -133,7 +133,7 @@ class GoogleSpeechDataset(Dataset):
 
         if aug_settings is not None:
             if "bg_noise" in aug_settings:
-                self.bg_adder = AddBackgroundNoise(
+                self.bg_adder = BackgroundNoiseAdder(
                     sounds_path=aug_settings["bg_noise"]["bg_folder"]
                 )
 
@@ -157,7 +157,7 @@ class GoogleSpeechDataset(Dataset):
             features_extracted = True
         else:
             path = cast(list[str], self.data_list)[index]
-            x = librosa.load(path, sr=self.audio_settings["sr"])[0]
+            x = load_audio(path, sr=self.audio_settings["sr"])
 
         x = self.transform(x, features_extracted=features_extracted)
 
@@ -208,11 +208,31 @@ class GoogleSpeechDataset(Dataset):
 
 def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
     sr = audio_settings["sr"]
-    x = librosa.util.fix_length(x, size=sr)
-    x = librosa.feature.melspectrogram(y=x, **audio_settings)
-    return librosa.feature.mfcc(
-        S=librosa.power_to_db(x), n_mfcc=audio_settings["n_mels"]
+    x = fix_length(x, size=sr)
+    return extract_features_spafe(x, audio_settings)
+
+
+def extract_features_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
+    sr = audio_settings["sr"]
+    opts = spafe.FeatureOptions(
+        fs=sr,
+        num_ceps=audio_settings["n_mels"],
+        nfilts=audio_settings["n_mels"],
+        nfft=audio_settings["n_fft"],
+        win_len=audio_settings["win_length"] / sr,
+        win_hop=audio_settings["hop_length"] / sr,
+        pre_emph=audio_settings.get("pre_emph", False),
     )
+    features = np.asarray(
+        spafe.mfcc(x.astype(np.float64).tolist(), opts), dtype=np.float32
+    )
+    return features.T
+
+
+def get_feature_cache_settings(audio_settings: dict[str, Any]) -> dict[str, Any]:
+    cache_settings = dict(audio_settings)
+    cache_settings["feature_backend"] = "spafe-rs"
+    return cache_settings
 
 
 def get_feature_cache_path(
@@ -225,7 +245,7 @@ def get_feature_cache_path(
         "path": str(source),
         "mtime_ns": stat.st_mtime_ns,
         "size": stat.st_size,
-        "audio_settings": audio_settings,
+        "audio_settings": get_feature_cache_settings(audio_settings),
     }
     cache_key = hashlib.sha256(
         json.dumps(cache_payload, sort_keys=True, default=str).encode("utf-8")
@@ -243,7 +263,7 @@ def load_feature_from_disk_cache(
     if cache_path.exists():
         return np.load(cache_path, allow_pickle=False)
 
-    x = librosa.load(path, sr=sr)[0]
+    x = load_audio(path, sr=sr)
     features = extract_features(x, audio_settings)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
@@ -265,9 +285,9 @@ def cache_item_loader(
             return load_feature_from_disk_cache(
                 path, sr, audio_settings, feature_cache_dir
             )
-        x = librosa.load(path, sr=sr)[0]
+        x = load_audio(path, sr=sr)
         return extract_features(x, audio_settings)
-    return librosa.load(path, sr=sr)[0]
+    return load_audio(path, sr=sr)
 
 
 def init_cache(

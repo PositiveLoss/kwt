@@ -39,7 +39,6 @@ hparams:
         n_fft: 480
         win_length: 480
         hop_length: 160
-        center: False
     
     model:
         name: # if name is provided below settings will be ignored during model creation   
