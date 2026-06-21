@@ -47,8 +47,9 @@ hparams:
         coch_high_freq: 8000.0
         connear_weights_path: ./data/connear/Gmodel.pt
         connear_auto_download: False
-        connear_device: cpu
+        connear_device: auto
         connear_sr: 20000
+        connear_batch_size: 4
         connear_n_channels: 40
         connear_log_scale: 1000000.0
         connear_normalize: True

@@ -15,7 +15,10 @@ from tqdm import tqdm
 
 from utils.audio import fix_length, load_audio
 from utils.augment import BackgroundNoiseAdder, time_shift, resample, spec_augment
-from utils.connear import CONNEAR_WEIGHTS_URL, extract_connear_channels
+from utils.connear import (
+    CONNEAR_WEIGHTS_URL,
+    extract_connear_features_batch,
+)
 from utils.types import Config
 
 FEATURE_CACHE_VERSION = 5
@@ -267,8 +270,18 @@ def extract_cochleagram_spafe(
 
 
 def extract_connear(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
-    features = extract_connear_channels(
-        x,
+    return extract_connear_batch([x], audio_settings)[0]
+
+
+def extract_connear_batch(
+    waveforms: list[np.ndarray], audio_settings: dict[str, Any]
+) -> list[np.ndarray]:
+    target_channels = audio_settings.get("connear_n_channels")
+    if target_channels is None:
+        target_channels = audio_settings["n_mels"]
+
+    features = extract_connear_features_batch(
+        waveforms,
         sr=int(audio_settings["sr"]),
         weights_path=str(
             audio_settings.get("connear_weights_path", "./data/connear/Gmodel.pt")
@@ -277,39 +290,12 @@ def extract_connear(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray
         auto_download=bool(audio_settings.get("connear_auto_download", False)),
         model_sr=int(audio_settings.get("connear_sr", 20_000)),
         input_scale=float(audio_settings.get("connear_input_scale", 1.0)),
+        output_channels=int(target_channels),
+        output_time_bins=int(audio_settings.get("feature_time_bins", 98)),
+        log_scale=float(audio_settings.get("connear_log_scale", 1_000_000.0)),
+        normalize=bool(audio_settings.get("connear_normalize", True)),
     )
-
-    features = np.log1p(
-        np.abs(features) * float(audio_settings.get("connear_log_scale", 1_000_000.0))
-    )
-    target_channels = audio_settings.get("connear_n_channels")
-    if target_channels is None:
-        target_channels = audio_settings["n_mels"]
-    features = resize_feature_axis(features, int(target_channels), axis=0)
-    if audio_settings.get("connear_normalize", True):
-        features = (features - features.mean()) / (features.std() + 1e-6)
-    return features.astype(np.float32, copy=False)
-
-
-def resize_feature_axis(
-    features: np.ndarray, feature_axis_bins: Any | None, axis: int
-) -> np.ndarray:
-    if feature_axis_bins is None:
-        return features
-
-    target_size = int(feature_axis_bins)
-    if target_size <= 0 or features.shape[axis] == target_size:
-        return features
-
-    moved = np.moveaxis(features, axis, 0)
-    old_positions = np.linspace(0.0, 1.0, num=moved.shape[0])
-    new_positions = np.linspace(0.0, 1.0, num=target_size)
-    flat = moved.reshape(moved.shape[0], -1)
-    resized_flat = np.empty((target_size, flat.shape[1]), dtype=np.float32)
-    for index in range(flat.shape[1]):
-        resized_flat[:, index] = np.interp(new_positions, old_positions, flat[:, index])
-    resized = resized_flat.reshape((target_size, *moved.shape[1:]))
-    return np.moveaxis(resized, 0, axis)
+    return [feature for feature in features]
 
 
 def resize_feature_time(
@@ -377,6 +363,17 @@ def load_feature_from_disk_cache(
     return features
 
 
+def save_feature_to_disk_cache(
+    cache_path: Path,
+    features: np.ndarray,
+) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+    with open(tmp_path, "wb") as f:
+        np.save(f, features, allow_pickle=False)
+    os.replace(tmp_path, cache_path)
+
+
 def cache_item_loader(
     path: str,
     sr: int,
@@ -392,6 +389,66 @@ def cache_item_loader(
         x = load_audio(path, sr=sr)
         return extract_features(x, audio_settings)
     return load_audio(path, sr=sr)
+
+
+def init_connear_feature_cache(
+    data_list: list[str],
+    sr: int,
+    audio_settings: dict[str, Any],
+    feature_cache_dir: str | None = None,
+) -> list[np.ndarray]:
+    """Batched CoNNear cache builder.
+
+    CoNNear is a neural model and is expensive one sample at a time. This path
+    intentionally avoids multiprocessing, especially for MPS, and batches the
+    model forward pass instead.
+    """
+
+    batch_size = int(audio_settings.get("connear_batch_size", 4))
+    if batch_size < 1:
+        raise ValueError("hparams.audio.connear_batch_size must be >= 1.")
+
+    cache: list[np.ndarray | None] = [None] * len(data_list)
+    pending_indices: list[int] = []
+    pending_waveforms: list[np.ndarray] = []
+
+    def flush_pending(progress: tqdm) -> None:
+        nonlocal pending_indices, pending_waveforms
+        if not pending_waveforms:
+            return
+
+        features_batch = extract_connear_batch(pending_waveforms, audio_settings)
+        for index, features in zip(pending_indices, features_batch, strict=True):
+            if feature_cache_dir is not None:
+                cache_path = get_feature_cache_path(
+                    data_list[index], audio_settings, feature_cache_dir
+                )
+                save_feature_to_disk_cache(cache_path, features)
+            cache[index] = features
+            progress.update(1)
+
+        pending_indices = []
+        pending_waveforms = []
+
+    with tqdm(total=len(data_list)) as progress:
+        for index, path in enumerate(data_list):
+            if feature_cache_dir is not None:
+                cache_path = get_feature_cache_path(
+                    path, audio_settings, feature_cache_dir
+                )
+                if cache_path.exists():
+                    cache[index] = np.load(cache_path, allow_pickle=False)
+                    progress.update(1)
+                    continue
+
+            pending_indices.append(index)
+            pending_waveforms.append(fix_length(load_audio(path, sr=sr), size=sr))
+            if len(pending_waveforms) >= batch_size:
+                flush_pending(progress)
+
+        flush_pending(progress)
+
+    return cast(list[np.ndarray], cache)
 
 
 def init_cache(
@@ -415,6 +472,14 @@ def init_cache(
     """
 
     cache: list[np.ndarray] = []
+
+    if cache_level == 2 and get_feature_type(audio_settings) == "connear":
+        return init_connear_feature_cache(
+            data_list,
+            sr=sr,
+            audio_settings=audio_settings,
+            feature_cache_dir=feature_cache_dir,
+        )
 
     loader_fn = functools.partial(
         cache_item_loader,

@@ -54,6 +54,8 @@ Set `exp.feature_cache: True` to persist deterministic feature extraction under 
 
 MFCC and cochleagram extraction use [spafe-rs](https://github.com/RustedBytes/spafe). Set `hparams.audio.feature_type` to `mfcc`, `cochleagram`, or `connear`; the provided alternate configs keep the model input shape at `40 x 98`. CoNNear uses the pretrained PyTorch model from [PositiveLoss/CoNNear_cochlea-PyTorch](https://github.com/PositiveLoss/CoNNear_cochlea-PyTorch).
 
+CoNNear is a neural feature extractor, so its first cache build is much slower than MFCC. `config_connear.yaml` enables disk feature caching by default and batches CoNNear extraction with `hparams.audio.connear_batch_size`.
+
 Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple dataloader batches before each optimizer update. The effective batch size is `batch_size * grad_accum_steps`.
 
 Refer to the [example config](config.yaml) to see how the config file looks like, and see the [config explanation](docs/config_file_explained.md) for a complete rundown of the various config parameters.

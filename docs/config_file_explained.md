@@ -73,8 +73,9 @@ hparams:
         coch_high_freq: 8000.0 # Cochleagram upper frequency limit, capped at sr / 2.
         connear_weights_path: ./data/connear/Gmodel.pt # Pretrained PyTorch CoNNear weights.
         connear_auto_download: False # If True, download missing CoNNear weights from GitHub during extraction.
-        connear_device: cpu    # Device used by the feature extractor. CPU is safest with dataloader workers.
+        connear_device: auto   # Device used by the feature extractor. Auto checks cuda, then mps, then cpu.
         connear_sr: 20000      # CoNNear model sample rate. Speech Commands audio is resampled internally.
+        connear_batch_size: 4   # Batch size used while precomputing CoNNear features with exp.cache: 2.
         connear_n_channels: 40 # Number of CoNNear channels after downsampling from the model's 201 channels.
         connear_log_scale: 1000000.0 # Multiplier before log1p(abs(feature)).
         connear_normalize: True # Per-sample feature-map standardization.

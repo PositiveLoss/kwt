@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from utils.audio import resample_audio
+from utils.device import resolve_device
 
 CONNEAR_WEIGHTS_URL = (
     "https://raw.githubusercontent.com/PositiveLoss/"
@@ -172,6 +173,7 @@ def ensure_connear_weights(weights_path: str | Path, auto_download: bool) -> Pat
 
 @lru_cache(maxsize=4)
 def load_connear(weights_path: str, device: str = "cpu") -> CoNNear:
+    device = str(resolve_device(device))
     model = CoNNear()
     state_dict = torch.load(weights_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
@@ -187,6 +189,98 @@ def _pad_to_stride_multiple(x: np.ndarray, multiple: int = 16) -> np.ndarray:
     return np.pad(x, (0, multiple - remainder))
 
 
+def prepare_connear_waveform(
+    x: np.ndarray,
+    sr: int,
+    model_sr: int = 20_000,
+    input_scale: float = 1.0,
+) -> np.ndarray:
+    """Resample, pad, and scale a waveform for CoNNear inference."""
+    if sr != model_sr:
+        x = resample_audio(x, sr, model_sr)
+    x = _pad_to_stride_multiple(x.astype(np.float32, copy=False))
+    return x * np.float32(input_scale)
+
+
+@torch.no_grad()
+def extract_connear_channels_batch(
+    waveforms: list[np.ndarray],
+    sr: int,
+    weights_path: str | Path,
+    device: str = "cpu",
+    auto_download: bool = False,
+    model_sr: int = 20_000,
+    input_scale: float = 1.0,
+) -> np.ndarray:
+    """Run CoNNear on a waveform batch and return ``(batch, channels, time)``."""
+    path = ensure_connear_weights(weights_path, auto_download)
+    prepared = [
+        prepare_connear_waveform(
+            waveform, sr=sr, model_sr=model_sr, input_scale=input_scale
+        )
+        for waveform in waveforms
+    ]
+    lengths = {waveform.shape[0] for waveform in prepared}
+    if len(lengths) != 1:
+        raise ValueError("Batched CoNNear extraction requires equal waveform lengths.")
+
+    target_device = resolve_device(device)
+    model = load_connear(str(path), device)
+    batch = torch.from_numpy(np.stack(prepared)).to(target_device).float().unsqueeze(-1)
+    output = model(batch, channels_last=True)
+    return output.transpose(1, 2).cpu().numpy().astype(np.float32, copy=False)
+
+
+@torch.no_grad()
+def extract_connear_features_batch(
+    waveforms: list[np.ndarray],
+    sr: int,
+    weights_path: str | Path,
+    device: str = "cpu",
+    auto_download: bool = False,
+    model_sr: int = 20_000,
+    input_scale: float = 1.0,
+    output_channels: int = 40,
+    output_time_bins: int = 98,
+    log_scale: float = 1_000_000.0,
+    normalize: bool = True,
+) -> np.ndarray:
+    """Run CoNNear and return compressed KWT-ready features.
+
+    This keeps the large ``201 x time`` CoNNear output on the target device and
+    transfers only the compact ``output_channels x output_time_bins`` result.
+    """
+    path = ensure_connear_weights(weights_path, auto_download)
+    prepared = [
+        prepare_connear_waveform(
+            waveform, sr=sr, model_sr=model_sr, input_scale=input_scale
+        )
+        for waveform in waveforms
+    ]
+    lengths = {waveform.shape[0] for waveform in prepared}
+    if len(lengths) != 1:
+        raise ValueError("Batched CoNNear extraction requires equal waveform lengths.")
+
+    target_device = resolve_device(device)
+    model = load_connear(str(path), device)
+    batch = torch.from_numpy(np.stack(prepared)).to(target_device).float().unsqueeze(-1)
+    features = model(batch, channels_last=True).transpose(1, 2)
+    features = torch.log1p(features.abs() * log_scale)
+    features = F.interpolate(
+        features.unsqueeze(1),
+        size=(output_channels, output_time_bins),
+        mode="bilinear",
+        align_corners=True,
+    ).squeeze(1)
+
+    if normalize:
+        mean = features.mean(dim=(1, 2), keepdim=True)
+        std = features.std(dim=(1, 2), keepdim=True)
+        features = (features - mean) / (std + 1e-6)
+
+    return features.cpu().numpy().astype(np.float32, copy=False)
+
+
 @torch.no_grad()
 def extract_connear_channels(
     x: np.ndarray,
@@ -198,13 +292,12 @@ def extract_connear_channels(
     input_scale: float = 1.0,
 ) -> np.ndarray:
     """Run CoNNear and return channels-first BM displacement features."""
-    path = ensure_connear_weights(weights_path, auto_download)
-    if sr != model_sr:
-        x = resample_audio(x, sr, model_sr)
-    x = _pad_to_stride_multiple(x.astype(np.float32, copy=False))
-    x = x * np.float32(input_scale)
-
-    model = load_connear(str(path), device)
-    batch = torch.from_numpy(x).to(torch.device(device)).float()[None, :, None]
-    output = model(batch, channels_last=True)[0]
-    return output.cpu().numpy().T.astype(np.float32, copy=False)
+    return extract_connear_channels_batch(
+        [x],
+        sr=sr,
+        weights_path=weights_path,
+        device=device,
+        auto_download=auto_download,
+        model_sr=model_sr,
+        input_scale=input_scale,
+    )[0]

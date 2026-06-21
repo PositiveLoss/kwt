@@ -19,10 +19,10 @@ exp:
     log_to_stdout: True
     warm_cache: False
     val_freq: 5
-    n_workers: 1
+    n_workers: 0
     pin_memory: True
     cache: 2
-    feature_cache: False
+    feature_cache: True
     feature_cache_dir: ./data/.feature_cache_connear
 
 hparams:
@@ -46,8 +46,9 @@ hparams:
         coch_high_freq: 8000.0
         connear_weights_path: ./data/connear/Gmodel.pt
         connear_auto_download: False
-        connear_device: mps
+        connear_device: auto
         connear_sr: 20000
+        connear_batch_size: 4
         connear_n_channels: 40
         connear_log_scale: 1000000.0
         connear_normalize: True
