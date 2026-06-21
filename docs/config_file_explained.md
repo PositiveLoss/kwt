@@ -80,6 +80,7 @@ hparams:
         connear_log_scale: 1000000.0 # Multiplier before log1p(abs(feature)).
         connear_normalize: True # Per-sample feature-map standardization.
         connear_input_scale: 1.0 # Optional waveform amplitude scale before CoNNear.
+        cache_log_every: 1000 # Write cache progress to training_log.txt every N samples.
 ```
 
 ### Model Settings

@@ -4,6 +4,7 @@ import hashlib
 import json
 import multiprocessing as mp
 import os
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -105,6 +106,8 @@ class GoogleSpeechDataset(Dataset):
         aug_settings: dict[str, Any] | None = None,
         cache: int = 0,
         feature_cache_dir: str | None = None,
+        split_name: str = "dataset",
+        config: Config | None = None,
     ) -> None:
         super().__init__()
 
@@ -112,16 +115,19 @@ class GoogleSpeechDataset(Dataset):
         self.aug_settings = aug_settings
         self.cache = cache
         self.feature_cache_dir = feature_cache_dir
+        self.split_name = split_name
 
         self.data_list: list[str] | list[np.ndarray]
         if cache:
-            print("Caching dataset into memory.")
+            log_event(f"Caching {split_name} dataset into memory.", config)
             self.data_list = init_cache(
                 data_list,
                 audio_settings["sr"],
                 cache,
                 audio_settings,
                 feature_cache_dir,
+                split_name=split_name,
+                config=config,
             )
         else:
             self.data_list = data_list
@@ -397,6 +403,8 @@ def init_connear_feature_cache(
     sr: int,
     audio_settings: dict[str, Any],
     feature_cache_dir: str | None = None,
+    split_name: str = "dataset",
+    config: Config | None = None,
 ) -> list[np.ndarray]:
     """Batched CoNNear cache builder.
 
@@ -412,9 +420,13 @@ def init_connear_feature_cache(
     cache: list[np.ndarray | None] = [None] * len(data_list)
     pending_indices: list[int] = []
     pending_waveforms: list[np.ndarray] = []
+    cache_hits = 0
+    cache_misses = 0
+    t0 = time.perf_counter()
+    log_every = max(1, int(audio_settings.get("cache_log_every", 1000)))
 
     def flush_pending(progress: tqdm) -> None:
-        nonlocal pending_indices, pending_waveforms
+        nonlocal cache_misses, pending_indices, pending_waveforms
         if not pending_waveforms:
             return
 
@@ -426,11 +438,28 @@ def init_connear_feature_cache(
                 )
                 save_feature_to_disk_cache(cache_path, features)
             cache[index] = features
+            cache_misses += 1
             progress.update(1)
+            maybe_log_cache_progress(
+                split_name,
+                progress.n,
+                len(data_list),
+                t0,
+                cache_hits,
+                cache_misses,
+                config,
+                log_every,
+            )
 
         pending_indices = []
         pending_waveforms = []
 
+    log_event(
+        f"Cache build started for {split_name}: samples={len(data_list)}, "
+        f"feature_type=connear, batch_size={batch_size}, "
+        f"disk_cache={'on' if feature_cache_dir is not None else 'off'}.",
+        config,
+    )
     with tqdm(total=len(data_list), desc="cache connear features") as progress:
         for index, path in enumerate(data_list):
             if feature_cache_dir is not None:
@@ -439,7 +468,18 @@ def init_connear_feature_cache(
                 )
                 if cache_path.exists():
                     cache[index] = np.load(cache_path, allow_pickle=False)
+                    cache_hits += 1
                     progress.update(1)
+                    maybe_log_cache_progress(
+                        split_name,
+                        progress.n,
+                        len(data_list),
+                        t0,
+                        cache_hits,
+                        cache_misses,
+                        config,
+                        log_every,
+                    )
                     continue
 
             pending_indices.append(index)
@@ -449,7 +489,65 @@ def init_connear_feature_cache(
 
         flush_pending(progress)
 
+    log_cache_finished(split_name, len(data_list), t0, cache_hits, cache_misses, config)
     return cast(list[np.ndarray], cache)
+
+
+def maybe_log_cache_progress(
+    split_name: str,
+    completed: int,
+    total: int,
+    start_time: float,
+    cache_hits: int,
+    cache_misses: int,
+    config: Config | None,
+    log_every: int,
+) -> None:
+    if config is None or completed == 0:
+        return
+    if completed != total and completed % log_every:
+        return
+
+    elapsed = time.perf_counter() - start_time
+    rate = completed / max(elapsed, 1e-9)
+    remaining = total - completed
+    eta_seconds = remaining / rate if rate > 0 else 0.0
+    log_event(
+        f"Cache progress {split_name}: {completed}/{total} "
+        f"({completed / total:.1%}), rate={rate:.2f}/s, "
+        f"elapsed={format_duration(elapsed)}, eta={format_duration(eta_seconds)}, "
+        f"disk_hits={cache_hits}, built={cache_misses}.",
+        config,
+    )
+
+
+def log_cache_finished(
+    split_name: str,
+    total: int,
+    start_time: float,
+    cache_hits: int,
+    cache_misses: int,
+    config: Config | None,
+) -> None:
+    elapsed = time.perf_counter() - start_time
+    log_event(
+        f"Cache finished {split_name}: {total}/{total}, "
+        f"elapsed={format_duration(elapsed)}, "
+        f"rate={total / max(elapsed, 1e-9):.2f}/s, "
+        f"disk_hits={cache_hits}, built={cache_misses}.",
+        config,
+    )
+
+
+def format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
 
 
 def init_cache(
@@ -459,6 +557,8 @@ def init_cache(
     audio_settings: dict[str, Any],
     feature_cache_dir: str | None = None,
     n_cache_workers: int = 4,
+    split_name: str = "dataset",
+    config: Config | None = None,
 ) -> list[np.ndarray]:
     """Loads entire dataset into memory for later use.
 
@@ -480,6 +580,8 @@ def init_cache(
             sr=sr,
             audio_settings=audio_settings,
             feature_cache_dir=feature_cache_dir,
+            split_name=split_name,
+            config=config,
         )
 
     loader_fn = functools.partial(
@@ -490,12 +592,41 @@ def init_cache(
         feature_cache_dir=feature_cache_dir,
     )
 
+    t0 = time.perf_counter()
+    log_every = max(1, int(audio_settings.get("cache_log_every", 1000)))
+    log_event(
+        f"Cache build started for {split_name}: samples={len(data_list)}, "
+        f"feature_type={get_feature_type(audio_settings)}, cache_level={cache_level}, "
+        f"workers={n_cache_workers}, "
+        f"disk_cache={'on' if feature_cache_dir is not None else 'off'}.",
+        config,
+    )
     with mp.Pool(n_cache_workers) as pool:
         for audio in tqdm(
-            pool.imap(func=loader_fn, iterable=data_list), total=len(data_list)
+            pool.imap(func=loader_fn, iterable=data_list),
+            total=len(data_list),
+            desc=f"cache {split_name}",
         ):
             cache.append(audio)
+            maybe_log_cache_progress(
+                split_name,
+                len(cache),
+                len(data_list),
+                t0,
+                cache_hits=0,
+                cache_misses=len(cache),
+                config=config,
+                log_every=log_every,
+            )
 
+    log_cache_finished(
+        split_name,
+        len(data_list),
+        t0,
+        cache_hits=0,
+        cache_misses=len(cache),
+        config=config,
+    )
     return cache
 
 
@@ -547,6 +678,8 @@ def get_loader(
         aug_settings=config["hparams"]["augment"] if train else None,
         cache=config["exp"]["cache"],
         feature_cache_dir=feature_cache_dir,
+        split_name=split,
+        config=config,
     )
     log_event(f"Prepared {split} dataset with {len(dataset)} samples.", config)
 
