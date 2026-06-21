@@ -5,11 +5,11 @@ from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
 
 import trackio
-import torch
 import yaml
 from config_parser import get_config
 from torch import nn
 
+from utils.checkpoint import checkpoint_path, load_checkpoint
 from utils.dataset import get_loader, get_train_val_test_split, warm_loader_cache
 from utils.loss import LabelSmoothingLoss
 from utils.misc import calc_step, count_params, get_model, log, seed_everything
@@ -105,7 +105,7 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
 
     if fine_tune:
         model = get_model({"name": "kwt-1"})
-        ckpt = torch.load(config["ckpt_path"], map_location="cpu", weights_only=True)
+        ckpt = load_checkpoint(config["ckpt_path"], map_location="cpu")
         model.load_state_dict(ckpt["model_state_dict"])
         model.mlp_head = nn.Sequential(nn.LayerNorm(64), nn.Linear(64, 3))
 
@@ -175,18 +175,17 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         config["hparams"]["n_epochs"] + 1, len(trainloader), len(trainloader) - 1
     )
 
-    # evaluating the final state (last.pth)
+    # evaluating the final state (last.safetensors)
     test_acc, test_loss = evaluate(
         model, criterion, testloader, config["hparams"]["device"]
     )
     log_dict = {"test_loss_last": test_loss, "test_acc_last": test_acc}
     log(log_dict, final_step, config)
 
-    # evaluating the best validation state (best.pth)
-    ckpt = torch.load(
-        os.path.join(config["exp"]["save_dir"], "best.pth"),
+    # evaluating the best validation state (best.safetensors)
+    ckpt = load_checkpoint(
+        checkpoint_path(config["exp"]["save_dir"], "best"),
         map_location=config["hparams"]["device"],
-        weights_only=True,
     )
     model.load_state_dict(ckpt["model_state_dict"])
     print("Best ckpt loaded.")

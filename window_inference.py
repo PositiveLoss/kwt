@@ -12,6 +12,7 @@ from torch import nn
 
 from config_parser import get_config
 from utils.audio import load_audio
+from utils.checkpoint import load_checkpoint
 from utils.dataset import extract_features
 from utils.device import resolve_device
 from utils.misc import get_model
@@ -113,7 +114,7 @@ def main(args: Namespace) -> None:
     ######################
     # load weights
     ######################
-    ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=True)
+    ckpt = load_checkpoint(args.ckpt, map_location="cpu")
     model.load_state_dict(ckpt["model_state_dict"])
 
     ######################

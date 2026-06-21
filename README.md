@@ -33,11 +33,19 @@ Running `train.py` is fairly straightforward. Only a path to a config file is re
 python train.py --conf path/to/config.yaml
 ```
 
+Training writes safetensors checkpoints to the run directory as `best.safetensors` and `last.safetensors`.
+
+For cochleagram features, use the provided alternate config:
+
+```
+python train.py --conf config_cochleagram.yaml
+```
+
 Set `exp.warm_cache: True` to iterate the train, validation, and test dataloaders once before they are used. This warms preprocessing, worker, and OS file caches inside the training process.
 
 Set `exp.feature_cache: True` to persist deterministic MFCC feature extraction under `exp.feature_cache_dir` and reuse it across runs. Feature caching skips waveform-level augmentation because it loads MFCCs directly; `spec_aug` still runs on cached features during training.
 
-MFCC extraction uses [spafe-rs](https://github.com/RustedBytes/spafe).
+Feature extraction uses [spafe-rs](https://github.com/RustedBytes/spafe). Set `hparams.audio.feature_type` to `mfcc` or `cochleagram`; the default cochleagram settings keep the model input shape at `40 x 98`.
 
 Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple dataloader batches before each optimizer update. The effective batch size is `batch_size * grad_accum_steps`.
 
@@ -52,7 +60,7 @@ You can use the pre-trained model (or a model you trained) for inference, using 
 
 ```
 python inference.py --conf config.yaml \
-                    --ckpt <path to pretrained_model.ckpt> \
+                    --ckpt <path to model.safetensors> \
                     --inp <path to audio.wav / path to audio folder> \
                     --out <output directory> \
                     --lmap label_map.json \
@@ -60,7 +68,7 @@ python inference.py --conf config.yaml \
                     --batch_size 8   # should be possible to use much larger batches if necessary, like 128, 256, 512 etc.
 
 python window_inference.py --conf config.yaml \
-                    --ckpt <path to pretrained_model.ckpt> \
+                    --ckpt <path to model.safetensors> \
                     --inp <path to audio.wav / path to audio folder> \
                     --out <output directory> \
                     --lmap label_map.json \
@@ -76,7 +84,7 @@ For detailed usage example, check the colab tutorial.
 
 ```
 python export_onnx.py --conf config.yaml \
-                      --ckpt <path to pretrained_model.ckpt> \
+                      --ckpt <path to model.safetensors> \
                       --out exports/kwt.onnx \
                       --slim \
                       --verify
@@ -94,6 +102,8 @@ python export_onnx.py --conf config.yaml \
 You can also set `exp.trackio: True` in `config.yaml` to log the same training metrics with [Trackio](https://github.com/gradio-app/trackio). By default Trackio logs locally; set `trackio_space_id` or `trackio_server_url` when you want to send runs to a remote dashboard.
 
 ## Pretrained Checkpoints
+
+New training runs save safetensors checkpoints. The original KWT-1 pretrained file below is a legacy PyTorch checkpoint and remains loadable for compatibility.
 
 | Model Name | Test Accuracy | Link |
 | ---------- | ------------- | ---- |

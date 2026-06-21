@@ -8,6 +8,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from utils.checkpoint import checkpoint_path
 from utils.misc import log, save_model
 from utils.scheduler import WarmUpLR
 from utils.types import Config
@@ -204,7 +205,7 @@ def train(
             # save best val ckpt
             if val_acc > best_acc:
                 best_acc = val_acc
-                save_path = os.path.join(config["exp"]["save_dir"], "best.pth")
+                save_path = checkpoint_path(config["exp"]["save_dir"], "best")
                 save_model(epoch, val_acc, save_path, net, optimizer, log_file)
 
     ###########################
@@ -216,5 +217,5 @@ def train(
     log(log_dict, step, config)
 
     # save final ckpt
-    save_path = os.path.join(config["exp"]["save_dir"], "last.pth")
+    save_path = checkpoint_path(config["exp"]["save_dir"], "last")
     save_model(epoch, val_acc, save_path, net, optimizer, log_file)

@@ -17,7 +17,7 @@ from utils.audio import fix_length, load_audio
 from utils.augment import BackgroundNoiseAdder, time_shift, resample, spec_augment
 from utils.types import Config
 
-FEATURE_CACHE_VERSION = 3
+FEATURE_CACHE_VERSION = 4
 
 
 def get_train_val_test_split(
@@ -209,10 +209,23 @@ class GoogleSpeechDataset(Dataset):
 def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
     sr = audio_settings["sr"]
     x = fix_length(x, size=sr)
-    return extract_features_spafe(x, audio_settings)
+    feature_type = get_feature_type(audio_settings)
+    if feature_type == "mfcc":
+        features = extract_mfcc_spafe(x, audio_settings)
+    elif feature_type == "cochleagram":
+        features = extract_cochleagram_spafe(x, audio_settings)
+    else:
+        raise ValueError(
+            "hparams.audio.feature_type must be one of mfcc or cochleagram."
+        )
+    return resize_feature_time(features, audio_settings.get("feature_time_bins"))
 
 
-def extract_features_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
+def get_feature_type(audio_settings: dict[str, Any]) -> str:
+    return str(audio_settings.get("feature_type", "mfcc")).lower()
+
+
+def extract_mfcc_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
     sr = audio_settings["sr"]
     opts = spafe.FeatureOptions(
         fs=sr,
@@ -229,9 +242,46 @@ def extract_features_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.
     return features.T
 
 
+def extract_cochleagram_spafe(
+    x: np.ndarray, audio_settings: dict[str, Any]
+) -> np.ndarray:
+    sr = audio_settings["sr"]
+    configured_high_freq = audio_settings.get("coch_high_freq")
+    configured_filter_n = audio_settings.get("coch_filter_n")
+    high_lim = min(float(configured_high_freq or sr / 2), sr / 2)
+    filter_n = int(configured_filter_n or audio_settings["n_mels"] - 2)
+    opts = spafe.CochleagramOptions(
+        signal_size=x.shape[0],
+        sr=sr,
+        env_sr=int(audio_settings.get("coch_env_sr", 100)),
+        filter_n=filter_n,
+        low_lim=float(audio_settings.get("coch_low_freq", 50.0)),
+        high_lim=high_lim,
+        sample_factor=int(audio_settings.get("coch_sample_factor", 1)),
+    )
+    output = spafe.cochleagram(x.astype(np.float64).tolist(), opts)
+    return np.asarray(output.cochleagram, dtype=np.float32)
+
+
+def resize_feature_time(
+    features: np.ndarray, feature_time_bins: Any | None
+) -> np.ndarray:
+    if feature_time_bins is None:
+        return features
+
+    target_size = int(feature_time_bins)
+    if target_size <= 0 or features.shape[1] == target_size:
+        return features
+
+    old_positions = np.linspace(0.0, 1.0, num=features.shape[1])
+    new_positions = np.linspace(0.0, 1.0, num=target_size)
+    resized = [np.interp(new_positions, old_positions, row) for row in features]
+    return np.asarray(resized, dtype=np.float32)
+
+
 def get_feature_cache_settings(audio_settings: dict[str, Any]) -> dict[str, Any]:
     cache_settings = dict(audio_settings)
-    cache_settings["feature_backend"] = "spafe-rs"
+    cache_settings["feature_backend"] = f"spafe-rs:{get_feature_type(audio_settings)}"
     return cache_settings
 
 

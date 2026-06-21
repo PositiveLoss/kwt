@@ -9,6 +9,7 @@ import torch
 import trackio
 from models.kwt import KWT, kwt_from_name
 from torch import nn, optim
+from utils.checkpoint import save_checkpoint
 from utils.types import Config
 
 
@@ -119,16 +120,13 @@ def save_model(
         log_file (str, optional): Log file. Defaults to None.
     """
 
-    ckpt_dict = {
-        "epoch": epoch,
-        "val_acc": val_acc,
-        "model_state_dict": net.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict()
-        if optimizer is not None
-        else optimizer,
-    }
-
-    torch.save(ckpt_dict, save_path)
+    save_checkpoint(
+        save_path,
+        epoch=epoch,
+        val_acc=val_acc,
+        model_state_dict=net.state_dict(),
+        optimizer_state_dict=optimizer.state_dict() if optimizer is not None else None,
+    )
 
     log_message = f"Saved {save_path} with accuracy {val_acc}."
     print(log_message)

@@ -1,4 +1,4 @@
-# sample config
+# sample config using spafe-rs cochleagram features
 
 data_root: ./data/
 train_list_file: ./data/training_list.txt
@@ -10,21 +10,20 @@ exp:
     trackio: False
     trackio_space_id:
     trackio_server_url:
-    proj_name: torch-kwt-1
+    proj_name: torch-kwt-cochleagram
     exp_dir: ./runs
-    exp_name: exp-0.0.1
+    exp_name: exp-cochleagram-0.0.1
     device: auto
-    log_freq: 20    # log every l_f steps
+    log_freq: 20
     log_to_file: True
     log_to_stdout: True
     warm_cache: False
-    val_freq: 5    # validate every v_f epochs
+    val_freq: 5
     n_workers: 1
     pin_memory: True
-    cache: 2 # 0 -> no cache | 1 -> cache wavs | 2 -> cache specs; stops wav augments
+    cache: 2
     feature_cache: False
-    feature_cache_dir: ./data/.feature_cache
-    
+    feature_cache_dir: ./data/.feature_cache_cochleagram
 
 hparams:
     seed: 0
@@ -34,7 +33,7 @@ hparams:
     l_smooth: 0.1
 
     audio:
-        feature_type: mfcc
+        feature_type: cochleagram
         feature_time_bins: 98
         sr: 16000
         n_mels: 40
@@ -45,9 +44,9 @@ hparams:
         coch_filter_n: 38
         coch_low_freq: 50.0
         coch_high_freq: 8000.0
-    
+
     model:
-        name: # if name is provided below settings will be ignored during model creation   
+        name:
         input_res: [40, 98]
         patch_res: [40, 1]
         num_classes: 35
@@ -66,7 +65,7 @@ hparams:
         opt_kwargs:
           lr: 0.001
           weight_decay: 0.1
-    
+
     scheduler:
         n_warmup: 10
         max_epochs: 140
@@ -76,7 +75,7 @@ hparams:
         resample:
             r_min: 0.85
             r_max: 1.15
-        
+
         time_shift:
             s_min: -0.1
             s_max: 0.1

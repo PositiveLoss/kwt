@@ -8,14 +8,15 @@ from typing import Any, cast
 import torch
 
 from config_parser import get_config
+from utils.checkpoint import load_checkpoint
 from utils.misc import get_model
 from utils.types import Config
 
 
-def load_checkpoint(
+def load_model_checkpoint(
     model: torch.nn.Module, ckpt_path: str, device: torch.device
 ) -> None:
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+    ckpt = load_checkpoint(ckpt_path, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
 
 
@@ -54,7 +55,7 @@ def export_onnx(args: Any) -> None:
     model.eval()
 
     if args.ckpt is not None:
-        load_checkpoint(model, args.ckpt, device)
+        load_model_checkpoint(model, args.ckpt, device)
 
     input_shape = get_input_shape(config, args.batch_size)
     example_input = torch.randn(input_shape, device=device)

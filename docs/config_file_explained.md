@@ -22,7 +22,7 @@ exp:
     trackio_server_url:                    # Optional Trackio server URL. Leave blank for local logging.
     proj_name: torch-kwt                   # Tracking project name for Trackio.
     exp_dir: ./runs                        # Your checkpoints will be saved locally at exp_dir/exp_name
-    exp_name: exp-0                        # ..for example, ./runs/exp-0/something.pth
+    exp_name: exp-0                        # ..for example, ./runs/exp-0/best.safetensors
     device: auto                           # "auto" checks for cuda, then mps, then cpu. You can also put "cpu", "cuda", or "mps".
                                            # only single-device training is supported currently.
     log_freq: 5                            # Saves logs every log_freq steps
@@ -60,11 +60,17 @@ hparams:
     ...
     ...
     audio:
+        feature_type: mfcc    # Feature extractor, either "mfcc" or "cochleagram".
+        feature_time_bins: 98 # Optional time-axis size after extraction. Keeps model input_res width stable.
         sr: 16000            # sampling rate
-        n_mels: 40           # number of mel bands for melspectrogram (and MFCC)
+        n_mels: 40           # number of MFCC coefficients, or output cochleagram rows with default coch_filter_n.
         n_fft: 480           # FFT size used by spafe-rs MFCC extraction.
         win_length: 480      # Window length in samples.
         hop_length: 160      # Hop length in samples.
+        coch_env_sr: 100      # Cochleagram envelope sample rate. Used only when feature_type is cochleagram.
+        coch_filter_n: 38     # Cochleagram filter count. spafe-rs returns filter_n + 2 rows, so 38 gives 40 rows.
+        coch_low_freq: 50.0   # Cochleagram lower frequency limit.
+        coch_high_freq: 8000.0 # Cochleagram upper frequency limit, capped at sr / 2.
 ```
 
 ### Model Settings

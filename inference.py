@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config_parser import get_config
+from utils.checkpoint import load_checkpoint
 from utils.dataset import GoogleSpeechDataset
 from utils.device import resolve_device
 from utils.misc import get_model
@@ -44,7 +45,7 @@ def main(args: Namespace) -> None:
     ######################
     # load weights
     ######################
-    ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=True)
+    ckpt = load_checkpoint(args.ckpt, map_location="cpu")
     model.load_state_dict(ckpt["model_state_dict"])
 
     ######################
