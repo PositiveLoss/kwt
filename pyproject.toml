@@ -1,0 +1,33 @@
+[project]
+name = "kwt"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "audiomentations>=0.43.1",
+    "einops>=0.8.2",
+    "helion>=1.1.0",
+    "librosa>=0.11.0",
+    "numba>=0.65.1",
+    "numpy>=2.4.6",
+    "onnx>=1.22.0",
+    "onnxruntime>=1.27.0",
+    "onnxscript>=0.7.0",
+    "onnxslim>=0.1.94",
+    "pydub>=0.25.1",
+    "pyyaml>=6.0.3",
+    "torch>=2.12.1",
+    "tqdm>=4.68.3",
+    "trackio>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyrefly>=1.1.1",
+    "ruff>=0.15.18",
+]
+
+[tool.pyrefly]
+project-includes = ["**/*.py"]
+project-excludes = ["notebooks/**"]
