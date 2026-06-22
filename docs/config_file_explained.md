@@ -48,6 +48,7 @@ hparams:                    # everything nested under hparams are hyperparamters
 ```
 hparams:
     seed: 0                  # Random seed for determinism
+    precision: float32       # Compute precision: float32, bfloat16, or float16. Reduced precision uses PyTorch autocast for training/inference.
     batch_size: 16           # Per-device dataloader batch size
     grad_accum_steps: 1      # Optimizer update every N batches. Effective batch size is batch_size * grad_accum_steps.
     n_epochs: 10             # How many epochs will be trained. (1 epoch = (len(dataset) / batch_size) steps)

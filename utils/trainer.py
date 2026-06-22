@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from utils.checkpoint import checkpoint_path
 from utils.misc import log, log_event, save_model
+from utils.precision import autocast_for_precision
 from utils.scheduler import WarmUpLR
 from utils.types import Config
 
@@ -25,6 +26,7 @@ def train_single_batch(
     device: torch.device,
     loss_scale: float = 1.0,
     num_classes: int | None = None,
+    precision: str = "float32",
 ) -> tuple[float, int]:
     """Performs forward/backward for one microbatch.
 
@@ -44,8 +46,9 @@ def train_single_batch(
     validate_targets(targets, num_classes)
     data, targets = data.to(device), targets.to(device)
 
-    outputs = net(data)
-    loss = criterion(outputs, targets)
+    with autocast_for_precision(device, precision):
+        outputs = net(data)
+        loss = criterion(outputs, targets)
     (loss / loss_scale).backward()
 
     correct = outputs.argmax(1).eq(targets).sum()
@@ -88,6 +91,7 @@ def evaluate(
     dataloader: DataLoader,
     device: torch.device,
     num_classes: int | None = None,
+    precision: str = "float32",
 ) -> tuple[float, float]:
     """Performs inference.
 
@@ -111,9 +115,10 @@ def evaluate(
     for data, targets in tqdm(dataloader):
         validate_targets(targets, num_classes)
         data, targets = data.to(device), targets.to(device)
-        out = net(data)
+        with autocast_for_precision(device, precision):
+            out = net(data)
+            loss = criterion(out, targets)
         correct += out.argmax(1).eq(targets).sum().item()
-        loss = criterion(out, targets)
         running_loss += loss.item()
 
     net.train()
@@ -150,6 +155,7 @@ def train(
     device = config["hparams"]["device"]
     log_file = os.path.join(config["exp"]["save_dir"], "training_log.txt")
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
+    precision = str(config["hparams"].get("precision", "float32"))
     num_classes = int(config["hparams"]["model"]["num_classes"])
     if grad_accum_steps < 1:
         raise ValueError("hparams.grad_accum_steps must be >= 1.")
@@ -162,7 +168,8 @@ def train(
     log_event(
         f"Training loop started on {device}: epochs={config['hparams']['n_epochs']}, "
         f"train_batches={len(trainloader)}, val_batches={len(valloader)}, "
-        f"grad_accum_steps={grad_accum_steps}, start_epoch={start_epoch}, "
+        f"grad_accum_steps={grad_accum_steps}, precision={precision}, "
+        f"start_epoch={start_epoch}, "
         f"start_step={start_step}, best_acc={best_acc:.6f}.",
         config,
     )
@@ -208,6 +215,7 @@ def train(
                     batch_index, n_batches, grad_accum_steps
                 ),
                 num_classes=num_classes,
+                precision=precision,
             )
             running_loss += loss
             correct += corr
@@ -252,7 +260,12 @@ def train(
         if not epoch % config["exp"]["val_freq"]:
             log_event(f"Validation started for epoch {epoch}.", config)
             val_acc, avg_val_loss = evaluate(
-                net, criterion, valloader, device, num_classes=num_classes
+                net,
+                criterion,
+                valloader,
+                device,
+                num_classes=num_classes,
+                precision=precision,
             )
             log_dict = {"epoch": epoch, "val_loss": avg_val_loss, "val_acc": val_acc}
             log(log_dict, step, config)
@@ -288,7 +301,12 @@ def train(
 
     log_event("Final validation started.", config)
     val_acc, avg_val_loss = evaluate(
-        net, criterion, valloader, device, num_classes=num_classes
+        net,
+        criterion,
+        valloader,
+        device,
+        num_classes=num_classes,
+        precision=precision,
     )
     log_dict = {"epoch": epoch, "val_loss": avg_val_loss, "val_acc": val_acc}
     log(log_dict, step, config)

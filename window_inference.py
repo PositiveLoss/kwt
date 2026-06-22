@@ -16,6 +16,7 @@ from utils.checkpoint import load_checkpoint
 from utils.dataset import extract_features
 from utils.device import resolve_device
 from utils.misc import get_model
+from utils.precision import autocast_for_precision
 
 WindowPrediction: TypeAlias = int | str | float | list[list[float | str]]
 
@@ -36,6 +37,7 @@ def get_clip_pred(
     config: dict[str, Any],
     batch_size: int,
     device: torch.device,
+    precision: str,
     mode: str,
     label_map: dict[str, str] | None,
 ) -> WindowPrediction:
@@ -61,8 +63,9 @@ def get_clip_pred(
                 torch.from_numpy(np.stack(window_arrays)).float().unsqueeze(1)
             )
             window_batch = window_batch.to(device)
-            out = net(window_batch)
-            conf, preds = out.softmax(1).max(1)
+            with autocast_for_precision(device, precision):
+                out = net(window_batch)
+                conf, preds = out.softmax(1).max(1)
             conf, preds = (
                 conf.cpu().numpy().reshape(-1, 1),
                 preds.cpu().numpy().reshape(-1, 1),
@@ -108,7 +111,7 @@ def main(args: Namespace) -> None:
     ######################
     # create model
     ######################
-    config = get_config(args.conf)
+    config = get_config(args.conf, precision=args.precision)
     model = get_model(config["hparams"]["model"])
 
     ######################
@@ -150,6 +153,7 @@ def main(args: Namespace) -> None:
             config,
             args.batch_size,
             device,
+            config["hparams"]["precision"],
             args.mode,
             label_map,
         )
@@ -226,6 +230,15 @@ if __name__ == "__main__":
         -'n_voting' returns the most frequent predicted class above the threshold.
         -'multi' expects that there are multiple different keyword classes in the audio. For each audio, the output is a list of lists,
             each sub-list being of the form [class, confidence, start, end].""",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default=None,
+        help=(
+            "Override config precision. One of float32, fp32, bfloat16, "
+            "bf16, float16, fp16, or half."
+        ),
     )
 
     args = parser.parse_args()

@@ -411,6 +411,7 @@ def training_pipeline(
         testloader,
         config["hparams"]["device"],
         num_classes=config["hparams"]["model"]["num_classes"],
+        precision=config["hparams"]["precision"],
     )
     log_dict = {"test_loss_last": test_loss, "test_acc_last": test_acc}
     log(log_dict, final_step, config)
@@ -431,6 +432,7 @@ def training_pipeline(
         testloader,
         config["hparams"]["device"],
         num_classes=config["hparams"]["model"]["num_classes"],
+        precision=config["hparams"]["precision"],
     )
     log_dict = {"test_loss_best": test_loss, "test_acc_best": test_acc}
     log(log_dict, final_step, config)
@@ -459,7 +461,7 @@ def main(args: Namespace) -> None:
     Main function to initiate training.
     """
 
-    config = get_config(args.conf, device=args.device)
+    config = get_config(args.conf, device=args.device, precision=args.precision)
     seed_everything(config["hparams"]["seed"])
     try:
         run_with_trackio(
@@ -485,6 +487,15 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Path to a safetensors checkpoint to resume from.",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default=None,
+        help=(
+            "Override config precision. One of float32, fp32, bfloat16, "
+            "bf16, float16, fp16, or half."
+        ),
     )
     args = parser.parse_args()
 

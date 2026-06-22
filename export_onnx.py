@@ -10,6 +10,7 @@ import torch
 from config_parser import get_config
 from utils.checkpoint import load_checkpoint
 from utils.misc import get_model
+from utils.precision import dtype_from_precision, resolve_precision
 from utils.types import Config
 
 
@@ -50,15 +51,18 @@ def slim_onnx_model(
 def export_onnx(args: Any) -> None:
     config = get_config(args.conf, device=args.device)
     device = config["hparams"]["device"]
+    precision = resolve_precision(args.dtype or config["hparams"].get("precision"))
+    dtype = dtype_from_precision(precision)
 
-    model = get_model(config["hparams"]["model"]).to(device)
+    model = get_model(config["hparams"]["model"]).to(device=device, dtype=dtype)
     model.eval()
 
     if args.ckpt is not None:
         load_model_checkpoint(model, args.ckpt, device)
+        model.to(dtype=dtype)
 
     input_shape = get_input_shape(config, args.batch_size)
-    example_input = torch.randn(input_shape, device=device)
+    example_input = torch.randn(input_shape, device=device, dtype=dtype)
     output_path = Path(args.out)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -77,7 +81,7 @@ def export_onnx(args: Any) -> None:
     if args.slim:
         slim_onnx_model(output_path, input_shape, args.verify)
 
-    print(f"Exported ONNX model to {output_path}")
+    print(f"Exported {precision} ONNX model to {output_path}")
 
 
 def main(args: Any) -> None:
@@ -126,6 +130,21 @@ if __name__ == "__main__":
         "--external-data",
         action="store_true",
         help="Store ONNX weights as external data instead of one self-contained file.",
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default=None,
+        help=(
+            "Export dtype. One of float32, fp32, bfloat16, bf16, "
+            "float16, fp16, or half."
+        ),
+    )
+    parser.add_argument(
+        "--precision",
+        dest="dtype",
+        type=str,
+        help="Alias for --dtype.",
     )
     args = parser.parse_args()
 

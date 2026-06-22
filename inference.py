@@ -15,11 +15,12 @@ from utils.checkpoint import load_checkpoint
 from utils.dataset import GoogleSpeechDataset
 from utils.device import resolve_device
 from utils.misc import get_model
+from utils.precision import autocast_for_precision
 
 
 @torch.no_grad()
 def get_preds(
-    net: nn.Module, dataloader: DataLoader, device: torch.device
+    net: nn.Module, dataloader: DataLoader, device: torch.device, precision: str
 ) -> list[int]:
     """Performs inference."""
 
@@ -28,7 +29,8 @@ def get_preds(
 
     for data in tqdm(dataloader):
         data = data.to(device)
-        out = net(data)
+        with autocast_for_precision(device, precision):
+            out = net(data)
         preds = out.argmax(1).cpu().numpy().ravel().tolist()
         preds_list.extend(preds)
 
@@ -39,7 +41,7 @@ def main(args: Namespace) -> None:
     ######################
     # create model
     ######################
-    config = get_config(args.conf)
+    config = get_config(args.conf, precision=args.precision)
     model = get_model(config["hparams"]["model"])
 
     ######################
@@ -74,7 +76,7 @@ def main(args: Namespace) -> None:
     device = resolve_device(args.device)
 
     model = model.to(device)
-    preds = get_preds(model, dataloader, device)
+    preds = get_preds(model, dataloader, device, config["hparams"]["precision"])
 
     ######################
     # save predictions
@@ -129,6 +131,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--batch_size", type=int, default=1, help="Batch size for batch inference."
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default=None,
+        help=(
+            "Override config precision. One of float32, fp32, bfloat16, "
+            "bf16, float16, fp16, or half."
+        ),
     )
 
     args = parser.parse_args()

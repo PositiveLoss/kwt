@@ -58,6 +58,8 @@ CoNNear is a neural feature extractor, so its first cache build is much slower t
 
 Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple dataloader batches before each optimizer update. The effective batch size is `batch_size * grad_accum_steps`.
 
+Set `hparams.precision: bfloat16` or `hparams.precision: float16`, or pass `--precision bfloat16` / `--precision float16`, to run training and inference forwards with PyTorch autocast. Checkpoints remain compatible fp32 state dicts.
+
 The default optimizer/scheduler is `adamw_fused` with `one_cycle_lr`, which uses fused AdamW on CUDA when available and typically reaches useful learning rates faster than a long external warmup. Use `opt_type: adamw` and `scheduler_type: cosine_annealing` if you want the original-style baseline.
 
 Resume interrupted training from the latest safetensors checkpoint:
@@ -103,9 +105,12 @@ For detailed usage example, check the colab tutorial.
 python export_onnx.py --conf config.yaml \
                       --ckpt <path to model.safetensors> \
                       --out exports/kwt.onnx \
+                      --dtype bfloat16 \
                       --slim \
                       --verify
 ```
+
+ONNX export uses `hparams.precision` by default. Pass `--dtype float32`, `--dtype bfloat16`, or `--dtype float16` to override it for the exported graph.
 
 ## Helion Kernels
 
