@@ -118,6 +118,7 @@ def validate_label_map(config: Config) -> None:
 def load_schedulers_state(
     schedulers: dict[str, WarmUpLR | Any | None],
     scheduler_state_dict: dict[str, Any] | None,
+    config: Config,
 ) -> None:
     if scheduler_state_dict is None:
         return
@@ -125,7 +126,34 @@ def load_schedulers_state(
     for name, state in scheduler_state_dict.items():
         scheduler = schedulers.get(name)
         if scheduler is not None and state is not None:
+            state = reconcile_scheduler_state(scheduler, state, name, config)
             scheduler.load_state_dict(state)
+
+
+def reconcile_scheduler_state(
+    scheduler: WarmUpLR | Any,
+    state: dict[str, Any],
+    name: str,
+    config: Config,
+) -> dict[str, Any]:
+    current_state = scheduler.state_dict()
+    if (
+        config["hparams"]["scheduler"].get("scheduler_type") == "one_cycle_lr"
+        and "total_steps" in state
+        and "total_steps" in current_state
+        and state["total_steps"] != current_state["total_steps"]
+    ):
+        state = dict(state)
+        old_total_steps = state["total_steps"]
+        state["total_steps"] = current_state["total_steps"]
+        state["_schedule_phases"] = current_state["_schedule_phases"]
+        log_event(
+            f"Adjusted resumed {name} OneCycleLR total_steps from "
+            f"{old_total_steps} to {state['total_steps']} to match current "
+            "scheduler.max_epochs.",
+            config,
+        )
+    return state
 
 
 def infer_completed_optimizer_steps(
@@ -336,7 +364,11 @@ def training_pipeline(
         config,
     )
     if resume_ckpt is not None:
-        load_schedulers_state(schedulers, resume_ckpt.get("scheduler_state_dict"))
+        load_schedulers_state(
+            schedulers,
+            resume_ckpt.get("scheduler_state_dict"),
+            config,
+        )
         if resume_ckpt.get("scheduler_state_dict") is not None:
             log_event("Restored scheduler state from resume checkpoint.", config)
         else:
