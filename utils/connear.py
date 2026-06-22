@@ -202,7 +202,7 @@ def prepare_connear_waveform(
     return x * np.float32(input_scale)
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def extract_connear_channels_batch(
     waveforms: list[np.ndarray],
     sr: int,
@@ -271,7 +271,7 @@ def compress_connear_features(
     return features
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def extract_connear_features_batch(
     waveforms: list[np.ndarray],
     sr: int,
@@ -316,7 +316,7 @@ def extract_connear_features_batch(
     return features.cpu().numpy().astype(np.float32, copy=False)
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def extract_connear_channels(
     x: np.ndarray,
     sr: int,
