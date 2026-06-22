@@ -136,6 +136,7 @@ def save_model(
     net: nn.Module,
     optimizer: optim.Optimizer | None = None,
     scheduler_state_dict: dict[str, Any] | None = None,
+    amp_scaler_state_dict: dict[str, Any] | None = None,
     step: int = 0,
     best_acc: float | None = None,
     log_file: str | None = None,
@@ -161,6 +162,7 @@ def save_model(
         model_state_dict=net.state_dict(),
         optimizer_state_dict=optimizer.state_dict() if optimizer is not None else None,
         scheduler_state_dict=scheduler_state_dict,
+        amp_scaler_state_dict=amp_scaler_state_dict,
         step=step,
         best_acc=best_acc,
     )

@@ -58,7 +58,7 @@ CoNNear is a neural feature extractor, so its first cache build is much slower t
 
 Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple dataloader batches before each optimizer update. The effective batch size is `batch_size * grad_accum_steps`.
 
-Set `hparams.precision: bfloat16` or `hparams.precision: float16`, or pass `--precision bfloat16` / `--precision float16`, to run training and inference forwards with PyTorch autocast. Checkpoints remain compatible fp32 state dicts.
+Set `hparams.precision: bfloat16` or `hparams.precision: float16`, or pass `--precision bfloat16` / `--precision float16`, to run training and inference forwards with PyTorch autocast. Float16 CUDA training uses `GradScaler`. Checkpoints remain compatible fp32 state dicts.
 
 The default optimizer/scheduler is `adamw_fused` with `one_cycle_lr`, which uses fused AdamW on CUDA when available and typically reaches useful learning rates faster than a long external warmup. Use `opt_type: adamw` and `scheduler_type: cosine_annealing` if you want the original-style baseline.
 

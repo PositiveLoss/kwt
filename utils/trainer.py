@@ -27,6 +27,7 @@ def train_single_batch(
     loss_scale: float = 1.0,
     num_classes: int | None = None,
     precision: str = "float32",
+    amp_scaler: torch.amp.GradScaler | None = None,
 ) -> tuple[float, int]:
     """Performs forward/backward for one microbatch.
 
@@ -49,7 +50,11 @@ def train_single_batch(
     with autocast_for_precision(device, precision):
         outputs = net(data)
         loss = criterion(outputs, targets)
-    (loss / loss_scale).backward()
+    scaled_loss = loss / loss_scale
+    if amp_scaler is not None and amp_scaler.is_enabled():
+        amp_scaler.scale(scaled_loss).backward()
+    else:
+        scaled_loss.backward()
 
     correct = outputs.argmax(1).eq(targets).sum()
     return loss.item(), correct.item()
@@ -138,6 +143,7 @@ def train(
     start_epoch: int = 0,
     start_step: int = 0,
     best_acc: float = 0.0,
+    amp_scaler_state_dict: dict[str, object] | None = None,
 ) -> None:
     """Trains model.
 
@@ -156,6 +162,12 @@ def train(
     log_file = os.path.join(config["exp"]["save_dir"], "training_log.txt")
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
     precision = str(config["hparams"].get("precision", "float32"))
+    amp_scaler = torch.amp.GradScaler(
+        device=device.type,
+        enabled=precision == "float16" and device.type == "cuda",
+    )
+    if amp_scaler.is_enabled() and amp_scaler_state_dict is not None:
+        amp_scaler.load_state_dict(amp_scaler_state_dict)
     num_classes = int(config["hparams"]["model"]["num_classes"])
     if grad_accum_steps < 1:
         raise ValueError("hparams.grad_accum_steps must be >= 1.")
@@ -169,6 +181,7 @@ def train(
         f"Training loop started on {device}: epochs={config['hparams']['n_epochs']}, "
         f"train_batches={len(trainloader)}, val_batches={len(valloader)}, "
         f"grad_accum_steps={grad_accum_steps}, precision={precision}, "
+        f"amp_scaler={amp_scaler.is_enabled()}, "
         f"start_epoch={start_epoch}, "
         f"start_step={start_step}, best_acc={best_acc:.6f}.",
         config,
@@ -216,6 +229,7 @@ def train(
                 ),
                 num_classes=num_classes,
                 precision=precision,
+                amp_scaler=amp_scaler,
             )
             running_loss += loss
             correct += corr
@@ -224,7 +238,11 @@ def train(
                 batch_index + 1
             ) == n_batches
             if should_step_optimizer:
-                optimizer.step()
+                if amp_scaler.is_enabled():
+                    amp_scaler.step(optimizer)
+                    amp_scaler.update()
+                else:
+                    optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
                 if active_scheduler is not None:
@@ -290,6 +308,9 @@ def train(
                     net,
                     optimizer,
                     scheduler_state_dict=get_schedulers_state_dict(schedulers),
+                    amp_scaler_state_dict=(
+                        amp_scaler.state_dict() if amp_scaler.is_enabled() else None
+                    ),
                     step=step,
                     best_acc=best_acc,
                     log_file=log_file,
@@ -325,6 +346,9 @@ def train(
         net,
         optimizer,
         scheduler_state_dict=get_schedulers_state_dict(schedulers),
+        amp_scaler_state_dict=(
+            amp_scaler.state_dict() if amp_scaler.is_enabled() else None
+        ),
         step=step,
         best_acc=best_acc,
         log_file=log_file,

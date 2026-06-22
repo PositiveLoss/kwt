@@ -117,6 +117,7 @@ def save_checkpoint(
     model_state_dict: Mapping[str, torch.Tensor],
     optimizer_state_dict: dict[str, Any] | None = None,
     scheduler_state_dict: dict[str, Any] | None = None,
+    amp_scaler_state_dict: dict[str, Any] | None = None,
     step: int = 0,
     best_acc: float | None = None,
 ) -> None:
@@ -133,6 +134,7 @@ def save_checkpoint(
                 "best_acc": val_acc if best_acc is None else best_acc,
                 "optimizer_state_dict": optimizer_data,
                 "scheduler_state_dict": _to_json_value(scheduler_state_dict),
+                "amp_scaler_state_dict": _to_json_value(amp_scaler_state_dict),
             }
         )
     }
@@ -165,6 +167,9 @@ def _load_safetensors_checkpoint(path: str) -> dict[str, Any]:
         "optimizer_state_dict": _unpack_optimizer_state(optimizer_data, tensors),
         "scheduler_state_dict": _from_json_value(
             checkpoint_metadata.get("scheduler_state_dict")
+        ),
+        "amp_scaler_state_dict": _from_json_value(
+            checkpoint_metadata.get("amp_scaler_state_dict")
         ),
     }
 

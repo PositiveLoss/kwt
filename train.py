@@ -378,6 +378,11 @@ def training_pipeline(
         start_epoch=start_epoch,
         start_step=start_step,
         best_acc=best_acc,
+        amp_scaler_state_dict=(
+            resume_ckpt.get("amp_scaler_state_dict")
+            if resume_ckpt is not None
+            else None
+        ),
     )
     log_event("Training loop finished.", config)
 
