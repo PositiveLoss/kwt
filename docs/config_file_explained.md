@@ -60,11 +60,11 @@ hparams:
     ...
     ...
     audio:
-        feature_type: mfcc    # Feature extractor, one of "mfcc", "cochleagram", or "connear".
+        feature_type: mfcc    # Feature extractor: mfcc, pncc, gfcc, ngcc, bfcc, rplp, cochleagram, or connear.
         feature_time_bins: 98 # Optional time-axis size after extraction. Keeps model input_res width stable.
         sr: 16000            # sampling rate
-        n_mels: 40           # number of MFCC coefficients, or output cochleagram rows with default coch_filter_n.
-        n_fft: 480           # FFT size used by spafe-rs MFCC extraction.
+        n_mels: 40           # number of cepstral coefficients, or output cochleagram rows with default coch_filter_n.
+        n_fft: 480           # FFT size used by spafe-rs cepstral extraction.
         win_length: 480      # Window length in samples.
         hop_length: 160      # Hop length in samples.
         coch_env_sr: 100      # Cochleagram envelope sample rate. Used only when feature_type is cochleagram.

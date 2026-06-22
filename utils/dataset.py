@@ -24,6 +24,8 @@ from utils.misc import log_event
 from utils.types import Config
 
 FEATURE_CACHE_VERSION = 5
+SPAFE_CEPSTRAL_FEATURES = {"mfcc", "pncc", "gfcc", "ngcc", "bfcc", "rplp"}
+SUPPORTED_FEATURE_TYPES = SPAFE_CEPSTRAL_FEATURES | {"cochleagram", "connear"}
 
 
 def get_train_val_test_split(
@@ -221,15 +223,16 @@ def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarra
     sr = audio_settings["sr"]
     x = fix_length(x, size=sr)
     feature_type = get_feature_type(audio_settings)
-    if feature_type == "mfcc":
-        features = extract_mfcc_spafe(x, audio_settings)
+    if feature_type in SPAFE_CEPSTRAL_FEATURES:
+        features = extract_cepstral_spafe(x, audio_settings, feature_type)
     elif feature_type == "cochleagram":
         features = extract_cochleagram_spafe(x, audio_settings)
     elif feature_type == "connear":
         features = extract_connear(x, audio_settings)
     else:
         raise ValueError(
-            "hparams.audio.feature_type must be one of mfcc, cochleagram, or connear."
+            "hparams.audio.feature_type must be one of "
+            f"{', '.join(sorted(SUPPORTED_FEATURE_TYPES))}."
         )
     return resize_feature_time(features, audio_settings.get("feature_time_bins"))
 
@@ -238,7 +241,9 @@ def get_feature_type(audio_settings: dict[str, Any]) -> str:
     return str(audio_settings.get("feature_type", "mfcc")).lower()
 
 
-def extract_mfcc_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
+def extract_cepstral_spafe(
+    x: np.ndarray, audio_settings: dict[str, Any], feature_type: str
+) -> np.ndarray:
     sr = audio_settings["sr"]
     opts = spafe.FeatureOptions(
         fs=sr,
@@ -249,10 +254,15 @@ def extract_mfcc_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndar
         win_hop=audio_settings["hop_length"] / sr,
         pre_emph=audio_settings.get("pre_emph", False),
     )
+    feature_fn = getattr(spafe, feature_type)
     features = np.asarray(
-        spafe.mfcc(x.astype(np.float64).tolist(), opts), dtype=np.float32
+        feature_fn(x.astype(np.float64).tolist(), opts), dtype=np.float32
     )
     return features.T
+
+
+def extract_mfcc_spafe(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
+    return extract_cepstral_spafe(x, audio_settings, "mfcc")
 
 
 def extract_cochleagram_spafe(
