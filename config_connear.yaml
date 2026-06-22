@@ -78,7 +78,7 @@ hparams:
 
     scheduler:
         n_warmup: 0
-        max_epochs: 140
+        max_epochs: 500
         scheduler_type: one_cycle_lr
         max_lr: 0.001
         pct_start: 0.1
