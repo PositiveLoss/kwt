@@ -78,7 +78,7 @@ hparams:
         connear_sr: 20000      # CoNNear model sample rate. Speech Commands audio is resampled internally.
         connear_batch_size: 4   # Batch size used while precomputing CoNNear features with exp.cache: 2.
         connear_n_channels: 201 # Number of CoNNear channels to keep. Use 201 for all pretrained channels.
-        connear_log_scale: 1000000.0 # Multiplier before log1p(abs(feature)).
+        connear_log_scale: 1000000.0 # Multiplier before log1p() after rectified temporal average pooling.
         connear_normalize: True # Per-sample feature-map standardization.
         connear_input_scale: 1.0 # Optional waveform amplitude scale before CoNNear.
         cache_log_every: 1000 # Write cache progress to training_log.txt every N samples.

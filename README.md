@@ -52,7 +52,7 @@ Set `exp.warm_cache: True` to iterate the train, validation, and test dataloader
 
 Set `exp.feature_cache: True` to persist deterministic feature extraction under `exp.feature_cache_dir` and reuse it across runs. Feature caching skips waveform-level augmentation because it loads features directly; `spec_aug` still runs on cached features during training.
 
-Cepstral and cochleagram extraction use [spafe-rs](https://github.com/RustedBytes/spafe). Set `hparams.audio.feature_type` to `mfcc`, `pncc`, `gfcc`, `ngcc`, `bfcc`, `rplp`, `cochleagram`, or `connear`. `config_connear.yaml` uses all 201 pretrained CoNNear channels with a `201 x 98` model input. CoNNear uses the pretrained PyTorch model from [PositiveLoss/CoNNear_cochlea-PyTorch](https://github.com/PositiveLoss/CoNNear_cochlea-PyTorch).
+Cepstral and cochleagram extraction use [spafe-rs](https://github.com/RustedBytes/spafe). Set `hparams.audio.feature_type` to `mfcc`, `pncc`, `gfcc`, `ngcc`, `bfcc`, `rplp`, `cochleagram`, or `connear`. `config_connear.yaml` uses all 201 pretrained CoNNear channels with a `201 x 98` model input. CoNNear uses the pretrained PyTorch model from [PositiveLoss/CoNNear_cochlea-PyTorch](https://github.com/PositiveLoss/CoNNear_cochlea-PyTorch). Its dense sample-rate displacement traces are rectified and average-pooled into 98 envelope frames before KWT.
 
 CoNNear is a neural feature extractor, so its first cache build is much slower than MFCC. `config_connear.yaml` enables disk feature caching by default and batches CoNNear extraction with `hparams.audio.connear_batch_size`.
 

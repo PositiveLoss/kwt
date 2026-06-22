@@ -23,7 +23,7 @@ from utils.connear import (
 from utils.misc import log_event
 from utils.types import Config
 
-FEATURE_CACHE_VERSION = 5
+FEATURE_CACHE_VERSION = 6
 SPAFE_CEPSTRAL_FEATURES = {"mfcc", "pncc", "gfcc", "ngcc", "bfcc", "rplp"}
 SUPPORTED_FEATURE_TYPES = SPAFE_CEPSTRAL_FEATURES | {"cochleagram", "connear"}
 

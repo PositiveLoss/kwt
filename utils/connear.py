@@ -231,6 +231,46 @@ def extract_connear_channels_batch(
     return output.transpose(1, 2).cpu().numpy().astype(np.float32, copy=False)
 
 
+def compress_connear_features(
+    features: Tensor,
+    output_channels: int = 40,
+    output_time_bins: int = 98,
+    log_scale: float = 1_000_000.0,
+    normalize: bool = True,
+) -> Tensor:
+    """Convert dense BM displacement into KWT-ready envelope features.
+
+    CoNNear returns sample-rate displacement traces. For keyword spotting we want
+    a lower-rate per-channel envelope, so the temporal axis is rectified and
+    average-pooled instead of directly interpolated.
+    """
+    if features.ndim != 3:
+        raise ValueError("CoNNear features must have shape (batch, channels, time).")
+    if output_channels <= 0:
+        raise ValueError("output_channels must be positive.")
+    if output_time_bins <= 0:
+        raise ValueError("output_time_bins must be positive.")
+
+    features = features.abs()
+    features = F.adaptive_avg_pool1d(features, output_time_bins)
+    features = torch.log1p(features * log_scale)
+
+    if features.shape[1] != output_channels:
+        features = F.interpolate(
+            features.unsqueeze(1),
+            size=(output_channels, output_time_bins),
+            mode="bilinear",
+            align_corners=True,
+        ).squeeze(1)
+
+    if normalize:
+        mean = features.mean(dim=(1, 2), keepdim=True)
+        std = features.std(dim=(1, 2), keepdim=True)
+        features = (features - mean) / (std + 1e-6)
+
+    return features
+
+
 @torch.no_grad()
 def extract_connear_features_batch(
     waveforms: list[np.ndarray],
@@ -265,18 +305,13 @@ def extract_connear_features_batch(
     model = load_connear(str(path), device)
     batch = torch.from_numpy(np.stack(prepared)).to(target_device).float().unsqueeze(-1)
     features = model(batch, channels_last=True).transpose(1, 2)
-    features = torch.log1p(features.abs() * log_scale)
-    features = F.interpolate(
-        features.unsqueeze(1),
-        size=(output_channels, output_time_bins),
-        mode="bilinear",
-        align_corners=True,
-    ).squeeze(1)
-
-    if normalize:
-        mean = features.mean(dim=(1, 2), keepdim=True)
-        std = features.std(dim=(1, 2), keepdim=True)
-        features = (features - mean) / (std + 1e-6)
+    features = compress_connear_features(
+        features,
+        output_channels=output_channels,
+        output_time_bins=output_time_bins,
+        log_scale=log_scale,
+        normalize=normalize,
+    )
 
     return features.cpu().numpy().astype(np.float32, copy=False)
 
