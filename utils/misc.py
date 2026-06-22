@@ -135,6 +135,9 @@ def save_model(
     save_path: str,
     net: nn.Module,
     optimizer: optim.Optimizer | None = None,
+    scheduler_state_dict: dict[str, Any] | None = None,
+    step: int = 0,
+    best_acc: float | None = None,
     log_file: str | None = None,
 ) -> None:
     """Saves checkpoint.
@@ -145,6 +148,9 @@ def save_model(
         save_path (str): Checkpoint path.
         net (nn.Module): Model instance.
         optimizer (optim.Optimizer, optional): Optimizer. Defaults to None.
+        scheduler_state_dict (dict, optional): Scheduler states. Defaults to None.
+        step (int): Global training step.
+        best_acc (float, optional): Best validation accuracy so far.
         log_file (str, optional): Log file. Defaults to None.
     """
 
@@ -154,6 +160,9 @@ def save_model(
         val_acc=val_acc,
         model_state_dict=net.state_dict(),
         optimizer_state_dict=optimizer.state_dict() if optimizer is not None else None,
+        scheduler_state_dict=scheduler_state_dict,
+        step=step,
+        best_acc=best_acc,
     )
 
     log_message = f"Saved {save_path} with accuracy {val_acc}."

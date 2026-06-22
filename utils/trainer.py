@@ -58,6 +58,13 @@ def _accumulation_group_size(
     return group_end - group_start
 
 
+def get_schedulers_state_dict(schedulers: Schedulers) -> dict[str, object]:
+    return {
+        name: scheduler.state_dict() if scheduler is not None else None
+        for name, scheduler in schedulers.items()
+    }
+
+
 @torch.no_grad()
 def evaluate(
     net: nn.Module,
@@ -103,6 +110,9 @@ def train(
     valloader: DataLoader,
     schedulers: Schedulers,
     config: Config,
+    start_epoch: int = 0,
+    start_step: int = 0,
+    best_acc: float = 0.0,
 ) -> None:
     """Trains model.
 
@@ -116,8 +126,7 @@ def train(
         config (dict): Config dict.
     """
 
-    step = 0
-    best_acc = 0.0
+    step = start_step
     device = config["hparams"]["device"]
     log_file = os.path.join(config["exp"]["save_dir"], "training_log.txt")
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
@@ -132,11 +141,21 @@ def train(
     log_event(
         f"Training loop started on {device}: epochs={config['hparams']['n_epochs']}, "
         f"train_batches={len(trainloader)}, val_batches={len(valloader)}, "
-        f"grad_accum_steps={grad_accum_steps}.",
+        f"grad_accum_steps={grad_accum_steps}, start_epoch={start_epoch}, "
+        f"start_step={start_step}, best_acc={best_acc:.6f}.",
         config,
     )
 
-    for epoch in range(config["hparams"]["n_epochs"]):
+    if start_epoch >= config["hparams"]["n_epochs"]:
+        log_event(
+            f"Skipping training because start_epoch={start_epoch} is >= "
+            f"n_epochs={config['hparams']['n_epochs']}.",
+            config,
+        )
+        return
+
+    epoch = start_epoch
+    for epoch in range(start_epoch, config["hparams"]["n_epochs"]):
         t0 = time.time()
         running_loss = 0.0
         correct = 0
@@ -227,7 +246,17 @@ def train(
                     f"New best validation accuracy {best_acc:.6f}; saving checkpoint.",
                     config,
                 )
-                save_model(epoch, val_acc, save_path, net, optimizer, log_file)
+                save_model(
+                    epoch,
+                    val_acc,
+                    save_path,
+                    net,
+                    optimizer,
+                    scheduler_state_dict=get_schedulers_state_dict(schedulers),
+                    step=step,
+                    best_acc=best_acc,
+                    log_file=log_file,
+                )
 
     ###########################
     # training complete
@@ -245,4 +274,14 @@ def train(
 
     # save final ckpt
     save_path = checkpoint_path(config["exp"]["save_dir"], "last")
-    save_model(epoch, val_acc, save_path, net, optimizer, log_file)
+    save_model(
+        epoch,
+        val_acc,
+        save_path,
+        net,
+        optimizer,
+        scheduler_state_dict=get_schedulers_state_dict(schedulers),
+        step=step,
+        best_acc=best_acc,
+        log_file=log_file,
+    )

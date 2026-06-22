@@ -60,6 +60,12 @@ Set `hparams.grad_accum_steps` above `1` to accumulate gradients across multiple
 
 The default optimizer/scheduler is `adamw_fused` with `one_cycle_lr`, which uses fused AdamW on CUDA when available and typically reaches useful learning rates faster than a long external warmup. Use `opt_type: adamw` and `scheduler_type: cosine_annealing` if you want the original-style baseline.
 
+Resume interrupted training from the latest safetensors checkpoint:
+
+```
+python train.py --conf config.yaml --resume runs/exp-0.0.1/last.safetensors
+```
+
 Refer to the [example config](config.yaml) to see how the config file looks like, and see the [config explanation](docs/config_file_explained.md) for a complete rundown of the various config parameters.
 
 ## Inference

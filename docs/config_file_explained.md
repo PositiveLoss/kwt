@@ -126,6 +126,14 @@ hparams:
         anneal_strategy: cos  # OneCycle annealing shape.
 ```
 
+Training can be resumed from a safetensors checkpoint:
+
+```
+python train.py --conf config.yaml --resume runs/exp-0.0.1/last.safetensors
+```
+
+Resume restores model, optimizer, scheduler, epoch, global step, and best validation accuracy for checkpoints saved by the current code. Older safetensors checkpoints still restore model and optimizer state, but may not contain scheduler state.
+
 ### Augmentation
 ```
 hparams:

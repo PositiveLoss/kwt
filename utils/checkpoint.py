@@ -18,7 +18,7 @@ _METADATA_KEY = "torch_kwt_checkpoint"
 _OPTIMIZER_PREFIX = "__optimizer__."
 _TENSOR_REF_KEY = "__tensor_key__"
 _TUPLE_KEY = "__tuple__"
-_FORMAT_VERSION = 1
+_FORMAT_VERSION = 2
 
 
 def checkpoint_path(save_dir: str, name: str) -> str:
@@ -116,6 +116,9 @@ def save_checkpoint(
     val_acc: float,
     model_state_dict: Mapping[str, torch.Tensor],
     optimizer_state_dict: dict[str, Any] | None = None,
+    scheduler_state_dict: dict[str, Any] | None = None,
+    step: int = 0,
+    best_acc: float | None = None,
 ) -> None:
     """Save a training checkpoint as a safetensors file."""
     tensors = _pack_model_state(model_state_dict)
@@ -125,8 +128,11 @@ def save_checkpoint(
             {
                 "format_version": _FORMAT_VERSION,
                 "epoch": epoch,
+                "step": step,
                 "val_acc": val_acc,
+                "best_acc": val_acc if best_acc is None else best_acc,
                 "optimizer_state_dict": optimizer_data,
+                "scheduler_state_dict": _to_json_value(scheduler_state_dict),
             }
         )
     }
@@ -146,13 +152,20 @@ def _load_safetensors_checkpoint(path: str) -> dict[str, Any]:
 
     return {
         "epoch": checkpoint_metadata.get("epoch", 0),
+        "step": checkpoint_metadata.get("step", 0),
         "val_acc": checkpoint_metadata.get("val_acc", 0.0),
+        "best_acc": checkpoint_metadata.get(
+            "best_acc", checkpoint_metadata.get("val_acc", 0.0)
+        ),
         "model_state_dict": {
             key: tensor
             for key, tensor in tensors.items()
             if not key.startswith(_OPTIMIZER_PREFIX)
         },
         "optimizer_state_dict": _unpack_optimizer_state(optimizer_data, tensors),
+        "scheduler_state_dict": _from_json_value(
+            checkpoint_metadata.get("scheduler_state_dict")
+        ),
     }
 
 

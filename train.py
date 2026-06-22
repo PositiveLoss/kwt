@@ -4,6 +4,7 @@ import json
 import time
 from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
+from typing import Any
 
 import trackio
 import yaml
@@ -67,7 +68,22 @@ def ensure_data_lists(config: Config) -> None:
         json.dump(label_map, f)
 
 
-def training_pipeline(config: Config, fine_tune: bool = False) -> None:
+def load_schedulers_state(
+    schedulers: dict[str, WarmUpLR | Any | None],
+    scheduler_state_dict: dict[str, Any] | None,
+) -> None:
+    if scheduler_state_dict is None:
+        return
+
+    for name, state in scheduler_state_dict.items():
+        scheduler = schedulers.get(name)
+        if scheduler is not None and state is not None:
+            scheduler.load_state_dict(state)
+
+
+def training_pipeline(
+    config: Config, fine_tune: bool = False, resume_path: str | None = None
+) -> None:
     """Initiates and executes all the steps involved with model training.
 
     Args:
@@ -134,6 +150,29 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         warm_loader_cache(valloader, "val")
         log_event("Finished dataloader warmup.", config)
 
+    if fine_tune and resume_path is not None:
+        raise ValueError("fine_tune and resume_path cannot be used together.")
+
+    resume_ckpt: dict[str, Any] | None = None
+    start_epoch = 0
+    start_step = 0
+    best_acc = 0.0
+    if resume_path is not None:
+        log_event(f"Loading resume checkpoint: {resume_path}", config)
+        resume_ckpt = load_checkpoint(resume_path, map_location="cpu")
+        start_epoch = int(resume_ckpt.get("epoch", -1)) + 1
+        start_step = int(resume_ckpt.get("step", 0))
+        checkpoint_best_acc = resume_ckpt.get("best_acc")
+        if checkpoint_best_acc is None:
+            checkpoint_best_acc = resume_ckpt.get("val_acc", 0.0)
+        best_acc = float(checkpoint_best_acc)
+        log_event(
+            f"Resume checkpoint loaded: checkpoint_epoch={resume_ckpt.get('epoch')}, "
+            f"start_epoch={start_epoch}, step={start_step}, "
+            f"best_acc={best_acc:.6f}.",
+            config,
+        )
+
     # model
     log_event("Creating model.", config)
     model = get_model(config["hparams"]["model"])
@@ -145,6 +184,10 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         model.mlp_head = nn.Sequential(nn.LayerNorm(64), nn.Linear(64, 3))
 
         print("Loaded model from checkpoint.")
+
+    if resume_ckpt is not None:
+        model.load_state_dict(resume_ckpt["model_state_dict"])
+        log_event("Restored model state from resume checkpoint.", config)
 
     model = model.to(config["hparams"]["device"])
 
@@ -168,6 +211,9 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
     log_event(
         f"Created optimizer: {config['hparams']['optimizer']['opt_type']}.", config
     )
+    if resume_ckpt is not None and resume_ckpt.get("optimizer_state_dict") is not None:
+        optimizer.load_state_dict(resume_ckpt["optimizer_state_dict"])
+        log_event("Restored optimizer state from resume checkpoint.", config)
 
     # lr scheduler
     schedulers = {"warmup": None, "scheduler": None}
@@ -209,6 +255,16 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         f"scheduler={scheduler_type}.",
         config,
     )
+    if resume_ckpt is not None:
+        load_schedulers_state(schedulers, resume_ckpt.get("scheduler_state_dict"))
+        if resume_ckpt.get("scheduler_state_dict") is not None:
+            log_event("Restored scheduler state from resume checkpoint.", config)
+        else:
+            log_event(
+                "Resume checkpoint has no scheduler state; continuing with newly "
+                "initialized schedulers.",
+                config,
+            )
 
     #####################################
     # Training Run
@@ -219,7 +275,18 @@ def training_pipeline(config: Config, fine_tune: bool = False) -> None:
         f"({len(trainloader)} batches/epoch).",
         config,
     )
-    train(model, optimizer, criterion, trainloader, valloader, schedulers, config)
+    train(
+        model,
+        optimizer,
+        criterion,
+        trainloader,
+        valloader,
+        schedulers,
+        config,
+        start_epoch=start_epoch,
+        start_step=start_step,
+        best_acc=best_acc,
+    )
     log_event("Training loop finished.", config)
 
     #####################################
@@ -295,7 +362,9 @@ def main(args: Namespace) -> None:
     config = get_config(args.conf, device=args.device)
     seed_everything(config["hparams"]["seed"])
     try:
-        run_with_trackio(config, lambda: training_pipeline(config))
+        run_with_trackio(
+            config, lambda: training_pipeline(config, resume_path=args.resume)
+        )
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from None
 
@@ -310,6 +379,12 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Override config device. One of auto, cpu, cuda, or mps.",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to a safetensors checkpoint to resume from.",
     )
     args = parser.parse_args()
 
