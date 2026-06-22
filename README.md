@@ -109,7 +109,7 @@ python export_onnx.py --conf config.yaml \
 
 ## Helion Kernels
 
-`use_helion_kernels: True` enables optional Helion GELU forward/backward kernels in the transformer MLP. Helion currently targets Linux GPU environments with Triton; CPU and MPS runs fall back to PyTorch GELU.
+`use_helion_kernels: True` enables optional experimental Helion GELU forward/backward kernels in the transformer MLP. Keep it disabled for normal training unless you are validating the custom kernel on your CUDA stack. CPU and MPS runs fall back to PyTorch GELU.
 
 ## Tutorials
 - [Colab Tutorial: [Using pretrained model | Inference scripts | Training]](https://colab.research.google.com/github/ID56/Torch-KWT/blob/main/notebooks/Torch_KWT_Tutorial.ipynb)

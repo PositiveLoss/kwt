@@ -24,6 +24,7 @@ def train_single_batch(
     criterion: Criterion,
     device: torch.device,
     loss_scale: float = 1.0,
+    num_classes: int | None = None,
 ) -> tuple[float, int]:
     """Performs forward/backward for one microbatch.
 
@@ -40,6 +41,7 @@ def train_single_batch(
         int: Number of correct preds.
     """
 
+    validate_targets(targets, num_classes)
     data, targets = data.to(device), targets.to(device)
 
     outputs = net(data)
@@ -58,6 +60,20 @@ def _accumulation_group_size(
     return group_end - group_start
 
 
+def validate_targets(targets: torch.Tensor, num_classes: int | None) -> None:
+    if num_classes is None or targets.numel() == 0:
+        return
+
+    min_target = int(targets.min().item())
+    max_target = int(targets.max().item())
+    if min_target < 0 or max_target >= num_classes:
+        raise ValueError(
+            "Target label index out of range: "
+            f"min={min_target}, max={max_target}, num_classes={num_classes}. "
+            "Check label_map and hparams.model.num_classes."
+        )
+
+
 def get_schedulers_state_dict(schedulers: Schedulers) -> dict[str, object]:
     return {
         name: scheduler.state_dict() if scheduler is not None else None
@@ -71,6 +87,7 @@ def evaluate(
     criterion: Criterion,
     dataloader: DataLoader,
     device: torch.device,
+    num_classes: int | None = None,
 ) -> tuple[float, float]:
     """Performs inference.
 
@@ -88,8 +105,11 @@ def evaluate(
     net.eval()
     correct = 0
     running_loss = 0.0
+    if num_classes is None:
+        num_classes = int(getattr(criterion, "cls", 0)) or None
 
     for data, targets in tqdm(dataloader):
+        validate_targets(targets, num_classes)
         data, targets = data.to(device), targets.to(device)
         out = net(data)
         correct += out.argmax(1).eq(targets).sum().item()
@@ -130,6 +150,7 @@ def train(
     device = config["hparams"]["device"]
     log_file = os.path.join(config["exp"]["save_dir"], "training_log.txt")
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
+    num_classes = int(config["hparams"]["model"]["num_classes"])
     if grad_accum_steps < 1:
         raise ValueError("hparams.grad_accum_steps must be >= 1.")
 
@@ -186,6 +207,7 @@ def train(
                 loss_scale=_accumulation_group_size(
                     batch_index, n_batches, grad_accum_steps
                 ),
+                num_classes=num_classes,
             )
             running_loss += loss
             correct += corr
@@ -229,7 +251,9 @@ def train(
 
         if not epoch % config["exp"]["val_freq"]:
             log_event(f"Validation started for epoch {epoch}.", config)
-            val_acc, avg_val_loss = evaluate(net, criterion, valloader, device)
+            val_acc, avg_val_loss = evaluate(
+                net, criterion, valloader, device, num_classes=num_classes
+            )
             log_dict = {"epoch": epoch, "val_loss": avg_val_loss, "val_acc": val_acc}
             log(log_dict, step, config)
             log_event(
@@ -263,7 +287,9 @@ def train(
     ###########################
 
     log_event("Final validation started.", config)
-    val_acc, avg_val_loss = evaluate(net, criterion, valloader, device)
+    val_acc, avg_val_loss = evaluate(
+        net, criterion, valloader, device, num_classes=num_classes
+    )
     log_dict = {"epoch": epoch, "val_loss": avg_val_loss, "val_acc": val_acc}
     log(log_dict, step, config)
     log_event(

@@ -69,7 +69,7 @@ hparams:
         emb_dropout: 0.1
         pre_norm: False
         use_sdpa: True
-        use_helion_kernels: True
+        use_helion_kernels: False
 
     optimizer:
         opt_type: adamw_fused

@@ -314,7 +314,11 @@ def training_pipeline(
     # evaluating the final state (last.safetensors)
     log_event("Evaluating final model state on test split.", config)
     test_acc, test_loss = evaluate(
-        model, criterion, testloader, config["hparams"]["device"]
+        model,
+        criterion,
+        testloader,
+        config["hparams"]["device"],
+        num_classes=config["hparams"]["model"]["num_classes"],
     )
     log_dict = {"test_loss_last": test_loss, "test_acc_last": test_acc}
     log(log_dict, final_step, config)
@@ -330,7 +334,11 @@ def training_pipeline(
 
     log_event("Evaluating best validation checkpoint on test split.", config)
     test_acc, test_loss = evaluate(
-        model, criterion, testloader, config["hparams"]["device"]
+        model,
+        criterion,
+        testloader,
+        config["hparams"]["device"],
+        num_classes=config["hparams"]["model"]["num_classes"],
     )
     log_dict = {"test_loss_best": test_loss, "test_acc_best": test_acc}
     log(log_dict, final_step, config)
