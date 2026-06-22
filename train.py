@@ -2,6 +2,7 @@ import math
 import os
 import json
 import time
+import warnings
 from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
 from typing import Any
@@ -125,6 +126,37 @@ def load_schedulers_state(
         scheduler = schedulers.get(name)
         if scheduler is not None and state is not None:
             scheduler.load_state_dict(state)
+
+
+def infer_completed_optimizer_steps(
+    start_epoch: int,
+    start_step: int,
+    optimizer_steps_per_epoch: int,
+    grad_accum_steps: int,
+) -> int:
+    if start_step > 0:
+        return math.ceil(start_step / grad_accum_steps)
+    return start_epoch * optimizer_steps_per_epoch
+
+
+def fast_forward_scheduler(
+    scheduler: WarmUpLR | Any | None,
+    completed_steps: int,
+    total_iters: int,
+) -> int:
+    if scheduler is None or completed_steps <= 0:
+        return 0
+
+    steps_to_advance = min(completed_steps, max(0, total_iters - 1))
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Detected call of `lr_scheduler.step\\(\\)` before "
+            "`optimizer.step\\(\\)`",
+        )
+        for _ in range(steps_to_advance):
+            scheduler.step()
+    return steps_to_advance
 
 
 def training_pipeline(
@@ -283,6 +315,7 @@ def training_pipeline(
             total_iters=optimizer_steps_per_epoch * scheduler_config["n_warmup"],
         )
 
+    total_iters = 0
     if scheduler_type is not None:
         if scheduler_type == "one_cycle_lr":
             total_iters = optimizer_steps_per_epoch * scheduler_config["max_epochs"]
@@ -307,9 +340,21 @@ def training_pipeline(
         if resume_ckpt.get("scheduler_state_dict") is not None:
             log_event("Restored scheduler state from resume checkpoint.", config)
         else:
+            completed_steps = infer_completed_optimizer_steps(
+                start_epoch,
+                start_step,
+                optimizer_steps_per_epoch,
+                grad_accum_steps,
+            )
+            advanced_steps = fast_forward_scheduler(
+                schedulers["scheduler"],
+                completed_steps,
+                total_iters,
+            )
             log_event(
-                "Resume checkpoint has no scheduler state; continuing with newly "
-                "initialized schedulers.",
+                "Resume checkpoint has no scheduler state; inferred "
+                f"{completed_steps} completed optimizer steps and advanced scheduler "
+                f"by {advanced_steps} steps.",
                 config,
             )
 
