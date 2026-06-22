@@ -28,6 +28,13 @@ SPAFE_CEPSTRAL_FEATURES = {"mfcc", "pncc", "gfcc", "ngcc", "bfcc", "rplp"}
 SUPPORTED_FEATURE_TYPES = SPAFE_CEPSTRAL_FEATURES | {"cochleagram", "connear"}
 
 
+def resolve_dataset_path(root: str, path: str) -> str:
+    """Resolve Speech Commands split entries in either relative or generated form."""
+    if os.path.isabs(path) or os.path.exists(path):
+        return os.path.normpath(path)
+    return os.path.normpath(os.path.join(root, path))
+
+
 def get_train_val_test_split(
     root: str, val_file: str, test_file: str
 ) -> tuple[list[str], list[str], list[str], dict[int, str]]:
@@ -52,7 +59,9 @@ def get_train_val_test_split(
     label_list = [
         label
         for label in sorted(os.listdir(root))
-        if os.path.isdir(os.path.join(root, label)) and label[0] != "_"
+        if os.path.isdir(os.path.join(root, label))
+        and label[0] != "_"
+        and glob.glob(os.path.join(root, label, "*.wav"))
     ]
     label_map = {idx: label for idx, label in enumerate(label_list)}
 
@@ -62,18 +71,21 @@ def get_train_val_test_split(
 
     all_files_set = set()
     for label in label_list:
-        all_files_set.update(glob.glob(os.path.join(root, label, "*.wav")))
+        all_files_set.update(
+            os.path.normpath(path)
+            for path in glob.glob(os.path.join(root, label, "*.wav"))
+        )
 
     with open(val_file, "r") as f:
         val_files_set = {
-            os.path.join(root, path)
+            resolve_dataset_path(root, path)
             for path in f.read().rstrip("\n").split("\n")
             if path
         }
 
     with open(test_file, "r") as f:
         test_files_set = {
-            os.path.join(root, path)
+            resolve_dataset_path(root, path)
             for path in f.read().rstrip("\n").split("\n")
             if path
         }

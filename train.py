@@ -41,16 +41,25 @@ def ensure_data_lists(config: Config) -> None:
             f"Download Speech Commands V2 first with: ./download_gspeech_v2.sh {data_root}"
         )
 
-    if os.path.exists(train_file) and os.path.exists(label_map_file):
-        return
-
     if not os.path.exists(val_file) or not os.path.exists(test_file):
         raise FileNotFoundError(
             "Missing split files. Expected validation/test split files at "
             f"{val_file!r} and {test_file!r}."
         )
 
-    print("Missing derived training split or label map; generating data lists.")
+    should_generate = not (
+        os.path.exists(train_file) and os.path.exists(label_map_file)
+    )
+    if not should_generate:
+        try:
+            validate_label_map(config)
+            return
+        except ValueError as exc:
+            print(f"Existing derived data lists are invalid: {exc}")
+            should_generate = True
+
+    if should_generate:
+        print("Generating derived data lists and label map.")
     train_list, val_list, test_list, label_map = get_train_val_test_split(
         data_root, val_file, test_file
     )
@@ -66,6 +75,43 @@ def ensure_data_lists(config: Config) -> None:
         f.write("\n".join(test_list))
     with open(label_map_file, "w+") as f:
         json.dump(label_map, f)
+
+
+def validate_label_map(config: Config) -> None:
+    label_map_file = config["label_map"]
+    num_classes = int(config["hparams"]["model"]["num_classes"])
+
+    with open(label_map_file, "r") as f:
+        label_map = json.load(f)
+
+    invalid_keys = [key for key in label_map if not str(key).isdigit()]
+    if invalid_keys:
+        raise ValueError(
+            f"{label_map_file} must use integer-like string keys; "
+            f"found invalid keys: {invalid_keys[:10]}."
+        )
+
+    label_indices = sorted(int(key) for key in label_map)
+    if not label_indices:
+        raise ValueError(f"{label_map_file} is empty.")
+
+    out_of_range = [idx for idx in label_indices if idx < 0 or idx >= num_classes]
+    if out_of_range:
+        bad_labels = {str(idx): label_map[str(idx)] for idx in out_of_range[:10]}
+        raise ValueError(
+            f"Label map has indices outside model num_classes={num_classes}: "
+            f"{bad_labels}. Set hparams.model.num_classes to at least "
+            f"{max(label_indices) + 1}, or regenerate {label_map_file} from the "
+            "intended dataset root."
+        )
+
+    expected = list(range(num_classes))
+    if label_indices != expected:
+        raise ValueError(
+            f"Label map indices must be contiguous 0..{num_classes - 1}; "
+            f"found min={label_indices[0]}, max={label_indices[-1]}, "
+            f"count={len(label_indices)}."
+        )
 
 
 def load_schedulers_state(
@@ -90,6 +136,7 @@ def training_pipeline(
         config (dict) - Dict containing various settings for the training run.
     """
     ensure_data_lists(config)
+    validate_label_map(config)
 
     config["exp"]["save_dir"] = os.path.join(
         config["exp"]["exp_dir"], config["exp"]["exp_name"]
