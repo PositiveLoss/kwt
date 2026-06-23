@@ -43,6 +43,7 @@ DEFAULT_AUDIO_SETTINGS: dict[str, Any] = {
     "carfac_log_scale": 1.0,
     "carfac_normalize": True,
     "carfac_output_channels": None,
+    "carfac_backend": "jax",
 }
 
 
@@ -94,6 +95,7 @@ def load_audio_settings(config_path: Path | None) -> dict[str, Any]:
     settings.setdefault("carfac_log_scale", DEFAULT_AUDIO_SETTINGS["carfac_log_scale"])
     settings.setdefault("carfac_normalize", DEFAULT_AUDIO_SETTINGS["carfac_normalize"])
     settings.setdefault("carfac_output_channels", None)
+    settings["carfac_backend"] = "jax"
     return settings
 
 

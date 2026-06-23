@@ -13,7 +13,12 @@ from config_parser import get_config
 from torch import nn
 
 from utils.checkpoint import checkpoint_path, load_checkpoint
-from utils.dataset import get_loader, get_train_val_test_split, warm_loader_cache
+from utils.dataset import (
+    get_loader,
+    get_train_val_test_split,
+    validate_feature_config,
+    warm_loader_cache,
+)
 from utils.loss import LabelSmoothingLoss
 from utils.misc import (
     calc_step,
@@ -197,6 +202,7 @@ def training_pipeline(
     """
     ensure_data_lists(config)
     validate_label_map(config)
+    validate_feature_config(config)
 
     config["exp"]["save_dir"] = os.path.join(
         config["exp"]["exp_dir"], config["exp"]["exp_name"]

@@ -30,6 +30,13 @@ SUPPORTED_FEATURE_TYPES = SPAFE_CEPSTRAL_FEATURES | {
     "cochleagram",
     "connear",
 }
+CARFAC_CHANNELS = 65
+CARFAC_BACKEND_NUMPY = "np"
+CARFAC_BACKEND_JAX = "jax"
+CARFAC_CACHE_BACKENDS = {
+    CARFAC_BACKEND_NUMPY: "carfac-np:nap",
+    CARFAC_BACKEND_JAX: "carfac-jax:nap",
+}
 
 
 def resolve_dataset_path(root: str, path: str) -> str:
@@ -244,6 +251,14 @@ def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarra
     elif feature_type == "cochleagram":
         features = extract_cochleagram_spafe(x, audio_settings)
     elif feature_type == "carfac":
+        carfac_backend = get_carfac_backend(audio_settings)
+        if carfac_backend != CARFAC_BACKEND_NUMPY:
+            raise ValueError(
+                "Training-time CARFAC extraction only supports "
+                "hparams.audio.carfac_backend=np. "
+                "Use carfac/prepare_features.py to precompute JAX CARFAC caches, "
+                "or set carfac_backend: np for on-demand extraction."
+            )
         features = extract_carfac_numpy(x, audio_settings)
     elif feature_type == "connear":
         features = extract_connear(x, audio_settings)
@@ -257,6 +272,16 @@ def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarra
 
 def get_feature_type(audio_settings: dict[str, Any]) -> str:
     return str(audio_settings.get("feature_type", "mfcc")).lower()
+
+
+def get_carfac_backend(audio_settings: dict[str, Any]) -> str:
+    backend = str(audio_settings.get("carfac_backend", CARFAC_BACKEND_NUMPY)).lower()
+    if backend not in CARFAC_CACHE_BACKENDS:
+        raise ValueError(
+            "hparams.audio.carfac_backend must be one of "
+            f"{', '.join(sorted(CARFAC_CACHE_BACKENDS))}; got {backend!r}."
+        )
+    return backend
 
 
 def extract_cepstral_spafe(
@@ -400,10 +425,56 @@ def get_feature_cache_settings(audio_settings: dict[str, Any]) -> dict[str, Any]
     if feature_type == "connear":
         cache_settings["feature_backend"] = "connear-pytorch"
     elif feature_type == "carfac":
-        cache_settings["feature_backend"] = "carfac-jax:nap"
+        carfac_backend = get_carfac_backend(audio_settings)
+        cache_settings["carfac_backend"] = carfac_backend
+        cache_settings["feature_backend"] = CARFAC_CACHE_BACKENDS[carfac_backend]
     else:
         cache_settings["feature_backend"] = f"spafe-rs:{feature_type}"
     return cache_settings
+
+
+def validate_feature_config(config: Config) -> None:
+    audio_settings = config["hparams"]["audio"]
+    if get_feature_type(audio_settings) != "carfac":
+        return
+
+    model_settings = config["hparams"]["model"]
+    input_res = [int(value) for value in model_settings["input_res"]]
+    patch_res = [int(value) for value in model_settings["patch_res"]]
+    if len(input_res) != 2 or len(patch_res) != 2:
+        raise ValueError("CARFAC model input_res and patch_res must have two values.")
+    if input_res[0] % patch_res[0] or input_res[1] % patch_res[1]:
+        raise ValueError(
+            "CARFAC model patch_res must divide input_res; "
+            f"got input_res={input_res}, patch_res={patch_res}."
+        )
+
+    carfac_backend = get_carfac_backend(audio_settings)
+    if carfac_backend == CARFAC_BACKEND_NUMPY:
+        probe = np.zeros(int(audio_settings["sr"]), dtype=np.float32)
+        feature_shape = list(extract_features(probe, audio_settings).shape)
+    else:
+        output_channels = audio_settings.get("carfac_output_channels")
+        feature_channels = (
+            int(output_channels)
+            if output_channels is not None and int(output_channels) > 0
+            else CARFAC_CHANNELS
+        )
+        feature_time_bins = audio_settings.get("feature_time_bins")
+        if feature_time_bins is None:
+            sr = int(audio_settings["sr"])
+            frame_length = max(
+                1, int(audio_settings.get("carfac_frame_length", sr // 100))
+            )
+            feature_time_bins = max(1, sr // frame_length)
+        feature_shape = [feature_channels, int(feature_time_bins)]
+
+    if feature_shape != input_res:
+        raise ValueError(
+            "CARFAC feature shape must match hparams.model.input_res; "
+            f"got feature shape {feature_shape}, input_res={input_res}. "
+            "Check carfac_output_channels, feature_time_bins, and model.input_res."
+        )
 
 
 def get_feature_cache_path(

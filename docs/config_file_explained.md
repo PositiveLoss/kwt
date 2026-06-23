@@ -35,6 +35,7 @@ exp:
     cache: 2                               # 0 -> no cache | 1 -> cache wav arrays | 2 -> cache extracted features (and also prevents wav augmentations like time_shift,
                                            # resampling and add_background_noise)
     feature_cache: False                   # Persist deterministic extracted features as .npy files across runs.
+                                           # Feature caching loads features directly and skips waveform-level augmentation; spec_aug still runs.
     feature_cache_dir: ./data/.feature_cache # Directory for feature_cache files.
 ```
 
@@ -61,7 +62,7 @@ hparams:
     ...
     ...
     audio:
-        feature_type: mfcc    # Feature extractor: mfcc, pncc, gfcc, ngcc, bfcc, rplp, cochleagram, or connear.
+        feature_type: mfcc    # Feature extractor: mfcc, pncc, gfcc, ngcc, bfcc, rplp, cochleagram, carfac, or connear.
         feature_time_bins: 98 # Optional time-axis size after extraction. Keeps model input_res width stable.
         sr: 16000            # sampling rate
         n_mels: 40           # number of cepstral coefficients, or output cochleagram rows with default coch_filter_n.
@@ -72,6 +73,12 @@ hparams:
         coch_filter_n: 38     # Cochleagram filter count. spafe-rs returns filter_n + 2 rows, so 38 gives 40 rows.
         coch_low_freq: 50.0   # Cochleagram lower frequency limit.
         coch_high_freq: 8000.0 # Cochleagram upper frequency limit, capped at sr / 2.
+        carfac_backend: np     # CARFAC backend identity. Use np for on-demand training extraction.
+                               # carfac/prepare_features.py writes JAX caches with carfac_backend: jax; JAX and NumPy caches are separate.
+        carfac_frame_length: 160 # CARFAC NAP averaging window in samples. 160 gives 100 raw frames at 16 kHz before feature_time_bins resize.
+        carfac_log_scale: 1.0  # Multiplier before log1p() for CARFAC NAP envelopes.
+        carfac_normalize: True # Per-sample CARFAC feature-map standardization.
+        carfac_output_channels: # Optional CARFAC frequency-axis resize. Blank keeps all 65 CARFAC channels.
         connear_weights_path: ./data/connear/Gmodel.pt # Pretrained PyTorch CoNNear weights.
         connear_auto_download: False # If True, download missing CoNNear weights from GitHub during extraction.
         connear_device: auto   # Device used by the feature extractor. Auto checks cuda, then mps, then cpu.
@@ -91,7 +98,7 @@ hparams:
     ...
     model:
         name: kwt-1          # If name is provided, will look for named model (e.g. kwt-1, kwt-2, kwt-3) and will ignore below parameters.
-        input_res: [40, 98]  # Shape of input feature map (feature bins x T). Use [201, 98] for full CoNNear.
+        input_res: [40, 98]  # Shape of input feature map (feature bins x T). Use [65, 98] for full CARFAC or [201, 98] for full CoNNear.
         patch_res: [40, 1]   # Resolution of patches. Use [201, 1] for full CoNNear.
         num_classes: 35      # Number of classes
         mlp_dim: 768         # mlp_dim, dim, heads, depth are all parameters which construct the model.

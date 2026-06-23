@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from train import ensure_data_lists, fast_forward_scheduler, validate_label_map
 from utils.checkpoint import checkpoint_path, load_checkpoint
-from utils.dataset import GoogleSpeechDataset
+from utils.dataset import GoogleSpeechDataset, validate_feature_config
 from utils.loss import LabelSmoothingLoss
 from utils.misc import (
     count_params,
@@ -597,6 +597,7 @@ def main(args: Namespace) -> None:
     config = load_config(args.conf, args.precision)
     ensure_data_lists(config)
     validate_label_map(config)
+    validate_feature_config(config)
     if args.nprocs == 1:
         train_xla_worker(0, args, config)
         return
