@@ -46,7 +46,7 @@ hparams:
         coch_low_freq: 50.0
         coch_high_freq: 8000.0
         carfac_frame_length: 125
-        carfac_backend: np
+        carfac_backend: jax
         carfac_log_scale: 1.0
         carfac_normalize: True
         carfac_output_channels:
