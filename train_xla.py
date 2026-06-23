@@ -51,6 +51,42 @@ def import_xla() -> tuple[Any, Any, Any]:
     return xm, pl, xmp
 
 
+def xla_runtime() -> Any | None:
+    try:
+        import torch_xla.runtime as xr
+    except ModuleNotFoundError:
+        return None
+    return xr
+
+
+def xla_device(xm: Any) -> torch.device:
+    try:
+        import torch_xla
+    except ModuleNotFoundError:
+        return xm.xla_device()
+    if hasattr(torch_xla, "device"):
+        return torch_xla.device()
+    return xm.xla_device()
+
+
+def xla_rank(xm: Any) -> int:
+    xr = xla_runtime()
+    if xr is not None and hasattr(xr, "global_ordinal"):
+        return int(xr.global_ordinal())
+    if hasattr(xm, "get_ordinal"):
+        return int(xm.get_ordinal())
+    return 0
+
+
+def xla_world_size(xm: Any) -> int:
+    xr = xla_runtime()
+    if xr is not None and hasattr(xr, "world_size"):
+        return int(xr.world_size())
+    if hasattr(xm, "xrt_world_size"):
+        return int(xm.xrt_world_size())
+    return 1
+
+
 def load_config(config_file: str, precision: str | None = None) -> Config:
     with open(config_file, "r") as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
@@ -64,7 +100,7 @@ def load_config(config_file: str, precision: str | None = None) -> Config:
 
 
 def is_master(xm: Any) -> bool:
-    return bool(xm.is_master_ordinal(local=False))
+    return xla_rank(xm) == 0
 
 
 def master_log_event(message: str, config: Config, xm: Any) -> None:
@@ -128,7 +164,7 @@ def make_loader(
 
 
 def reduce_sum(value: float | int, device: torch.device, xm: Any) -> float:
-    if xm.xrt_world_size() == 1:
+    if xla_world_size(xm) == 1:
         return float(value)
     tensor = torch.tensor(float(value), device=device)
     reduced = xm.all_reduce(xm.REDUCE_SUM, tensor)
@@ -136,11 +172,12 @@ def reduce_sum(value: float | int, device: torch.device, xm: Any) -> float:
 
 
 def reduce_mean(value: float, device: torch.device, xm: Any) -> float:
-    if xm.xrt_world_size() == 1:
+    world_size = xla_world_size(xm)
+    if world_size == 1:
         return float(value)
     tensor = torch.tensor(float(value), device=device)
     reduced = xm.all_reduce(xm.REDUCE_SUM, tensor)
-    return float((reduced / xm.xrt_world_size()).item())
+    return float((reduced / world_size).item())
 
 
 def xla_autocast(device: torch.device, precision: str) -> Any:
@@ -267,15 +304,15 @@ def save_xla_checkpoint(
 
 
 def rendezvous_if_distributed(tag: str, xm: Any) -> None:
-    if xm.xrt_world_size() > 1:
+    if xla_world_size(xm) > 1:
         xm.rendezvous(tag)
 
 
 def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
     xm, pl, _ = import_xla()
-    device = xm.xla_device()
-    rank = xm.get_ordinal()
-    world_size = xm.xrt_world_size()
+    device = xla_device(xm)
+    rank = xla_rank(xm)
+    world_size = xla_world_size(xm)
 
     config = dict(base_config)
     config["exp"] = dict(base_config["exp"])
