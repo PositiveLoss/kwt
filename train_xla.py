@@ -14,7 +14,13 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-from train import ensure_data_lists, fast_forward_scheduler, validate_label_map
+from train import (
+    ensure_data_lists,
+    fast_forward_scheduler,
+    infer_completed_optimizer_steps,
+    load_schedulers_state,
+    validate_label_map,
+)
 from utils.checkpoint import checkpoint_path, load_checkpoint
 from utils.dataset import (
     CARFAC_BACKEND_JAX,
@@ -309,6 +315,17 @@ def build_schedulers(
     scheduler_config = config["hparams"]["scheduler"]
     scheduler_type = scheduler_config["scheduler_type"]
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
+    if grad_accum_steps < 1:
+        raise ValueError("hparams.grad_accum_steps must be >= 1.")
+    if (
+        scheduler_type == "one_cycle_lr"
+        and scheduler_config["max_epochs"] < config["hparams"]["n_epochs"]
+    ):
+        raise ValueError(
+            "one_cycle_lr scheduler.max_epochs must be at least hparams.n_epochs; "
+            f"got max_epochs={scheduler_config['max_epochs']}, "
+            f"n_epochs={config['hparams']['n_epochs']}."
+        )
     optimizer_steps_per_epoch = math.ceil(len(trainloader) / grad_accum_steps)
 
     if scheduler_config["n_warmup"] and scheduler_type != "one_cycle_lr":
@@ -456,14 +473,21 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
         best_acc = float(checkpoint.get("best_acc", checkpoint.get("val_acc", 0.0)))
         best_saved = os.path.exists(checkpoint_path(config["exp"]["save_dir"], "best"))
         if checkpoint.get("scheduler_state_dict") is None:
-            completed_steps = start_epoch * optimizer_steps_per_epoch
+            completed_steps = infer_completed_optimizer_steps(
+                start_epoch,
+                start_step,
+                optimizer_steps_per_epoch,
+                grad_accum_steps,
+            )
             fast_forward_scheduler(
                 schedulers["scheduler"], completed_steps, total_iters
             )
         else:
-            for name, state in checkpoint["scheduler_state_dict"].items():
-                if schedulers.get(name) is not None and state is not None:
-                    schedulers[name].load_state_dict(state)
+            load_schedulers_state(
+                schedulers,
+                checkpoint["scheduler_state_dict"],
+                config,
+            )
         xm.mark_step()
 
     grad_accum_steps = int(config["hparams"].get("grad_accum_steps", 1))
