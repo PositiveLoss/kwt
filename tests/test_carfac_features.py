@@ -25,7 +25,8 @@ def load_config(name: str) -> dict:
 class CarfacFeatureTests(unittest.TestCase):
     def test_carfac_smallest_shape_is_finite_float32(self) -> None:
         config = load_config("config_carfac_smallest.yaml")
-        audio = config["hparams"]["audio"]
+        audio = dict(config["hparams"]["audio"])
+        audio["carfac_backend"] = "np"
         x = np.zeros(int(audio["sr"]), dtype=np.float32)
 
         features = extract_features(x, audio)
@@ -36,7 +37,8 @@ class CarfacFeatureTests(unittest.TestCase):
 
     def test_carfac_base_shape_is_finite_float32(self) -> None:
         config = load_config("config_carfac_base.yaml")
-        audio = config["hparams"]["audio"]
+        audio = dict(config["hparams"]["audio"])
+        audio["carfac_backend"] = "np"
         x = np.zeros(int(audio["sr"]), dtype=np.float32)
 
         features = extract_features(x, audio)
@@ -48,6 +50,7 @@ class CarfacFeatureTests(unittest.TestCase):
     def test_carfac_output_channels_resizes_frequency_axis(self) -> None:
         config = load_config("config_carfac_smallest.yaml")
         audio = dict(config["hparams"]["audio"])
+        audio["carfac_backend"] = "np"
         audio["carfac_output_channels"] = 40
         x = np.zeros(int(audio["sr"]), dtype=np.float32)
 

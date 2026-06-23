@@ -16,7 +16,14 @@ from tqdm import tqdm
 
 from train import ensure_data_lists, fast_forward_scheduler, validate_label_map
 from utils.checkpoint import checkpoint_path, load_checkpoint
-from utils.dataset import GoogleSpeechDataset, validate_feature_config
+from utils.dataset import (
+    CARFAC_BACKEND_JAX,
+    GoogleSpeechDataset,
+    get_carfac_backend,
+    get_feature_cache_path,
+    get_feature_type,
+    validate_feature_config,
+)
 from utils.loss import LabelSmoothingLoss
 from utils.misc import (
     count_params,
@@ -116,6 +123,55 @@ def master_log(log_dict: dict[str, Any], step: int, config: Config, xm: Any) -> 
 def read_split(path: str) -> list[str]:
     with open(path, "r") as f:
         return [line for line in f.read().rstrip().split("\n") if line]
+
+
+def validate_precomputed_feature_cache(
+    config: Config,
+    args: Namespace,
+    splits: dict[str, list[str]],
+) -> None:
+    audio_settings = config["hparams"]["audio"]
+    feature_cache_dir = (
+        config["exp"].get("feature_cache_dir")
+        if config["exp"].get("feature_cache", False)
+        else None
+    )
+    if (
+        feature_cache_dir is None
+        or get_feature_type(audio_settings) != "carfac"
+        or get_carfac_backend(audio_settings) != CARFAC_BACKEND_JAX
+    ):
+        return
+
+    missing_count = 0
+    missing_examples: list[str] = []
+    total = 0
+    for data_list in splits.values():
+        for path in data_list:
+            total += 1
+            cache_path = get_feature_cache_path(path, audio_settings, feature_cache_dir)
+            if cache_path.exists():
+                continue
+            missing_count += 1
+            if len(missing_examples) < 5:
+                missing_examples.append(path)
+
+    if not missing_count:
+        return
+
+    command = (
+        "PJRT_DEVICE=TPU uv run python carfac/prepare_features.py "
+        f"--data-root {config['data_root']} "
+        f"--out-dir {feature_cache_dir} "
+        f"--config {args.conf}"
+    )
+    examples = "\n".join(f"  - {path}" for path in missing_examples)
+    raise RuntimeError(
+        "JAX CARFAC training requires precomputed feature-cache files. "
+        f"Missing {missing_count}/{total} cache entries under {feature_cache_dir}.\n"
+        f"Build them first with:\n  {command}\n"
+        f"Example missing source files:\n{examples}"
+    )
 
 
 def make_loader(
@@ -349,6 +405,12 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
 
     train_list = read_split(config["train_list_file"])
     val_list = read_split(config["val_list_file"])
+    test_list = read_split(config["test_list_file"])
+    validate_precomputed_feature_cache(
+        config,
+        args,
+        {"train": train_list, "val": val_list, "test": test_list},
+    )
     trainloader, train_sampler = make_loader(
         train_list, config, True, rank, world_size, "train"
     )
@@ -547,7 +609,6 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
     )
     rendezvous_if_distributed("final_last_saved", xm)
 
-    test_list = read_split(config["test_list_file"])
     testloader, test_sampler = make_loader(
         test_list, config, False, rank, world_size, "test"
     )
