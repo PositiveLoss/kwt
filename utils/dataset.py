@@ -311,6 +311,7 @@ def extract_carfac_numpy(x: np.ndarray, audio_settings: dict[str, Any]) -> np.nd
     frame_length = int(audio_settings.get("carfac_frame_length", sr // 100))
     frame_length = max(1, frame_length)
     log_scale = float(audio_settings.get("carfac_log_scale", 1.0))
+    normalize = bool(audio_settings.get("carfac_normalize", True))
     output_channels = audio_settings.get("carfac_output_channels")
 
     cfp = carfac.design_carfac(fs=sr, n_ears=1)
@@ -326,6 +327,8 @@ def extract_carfac_numpy(x: np.ndarray, audio_settings: dict[str, Any]) -> np.nd
         nap = nap[:trim]
     features = nap.reshape(num_frames, frame_length, nap.shape[1]).mean(axis=1).T
     features = np.log1p(np.maximum(features, 0.0) * log_scale)
+    if normalize:
+        features = (features - features.mean()) / (features.std() + 1e-6)
     if output_channels is not None and int(output_channels) > 0:
         features = resize_feature_frequency(features, int(output_channels))
     return np.asarray(features, dtype=np.float32)

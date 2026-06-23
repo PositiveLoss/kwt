@@ -47,6 +47,7 @@ hparams:
         coch_high_freq: 8000.0
         carfac_frame_length: 160
         carfac_log_scale: 1.0
+        carfac_normalize: True
         carfac_output_channels:
         cache_log_every: 1000
 

@@ -41,6 +41,7 @@ DEFAULT_AUDIO_SETTINGS: dict[str, Any] = {
     "sr": 16_000,
     "carfac_frame_length": 160,
     "carfac_log_scale": 1.0,
+    "carfac_normalize": True,
     "carfac_output_channels": None,
 }
 
@@ -91,6 +92,7 @@ def load_audio_settings(config_path: Path | None) -> dict[str, Any]:
     settings.setdefault("sr", DEFAULT_AUDIO_SETTINGS["sr"])
     settings.setdefault("carfac_frame_length", int(settings["sr"]) // 100)
     settings.setdefault("carfac_log_scale", DEFAULT_AUDIO_SETTINGS["carfac_log_scale"])
+    settings.setdefault("carfac_normalize", DEFAULT_AUDIO_SETTINGS["carfac_normalize"])
     settings.setdefault("carfac_output_channels", None)
     return settings
 
@@ -181,6 +183,7 @@ def make_runner(
     num_frames = max(1, sr // frame_length)
     trim = num_frames * frame_length
     log_scale = float(audio_settings.get("carfac_log_scale", 1.0))
+    normalize = bool(audio_settings.get("carfac_normalize", True))
     params = carfac_jax.CarfacDesignParameters.with_n_ears(
         n_ears=1,
         fs=float(sr),
@@ -201,7 +204,12 @@ def make_runner(
             jnp.reshape(nap, (num_frames, frame_length, nap.shape[1])),
             axis=1,
         ).T
-        return jnp.log1p(jnp.maximum(features, 0.0) * log_scale)
+        features = jnp.log1p(jnp.maximum(features, 0.0) * log_scale)
+        if normalize:
+            mean = jnp.mean(features)
+            std = jnp.std(features)
+            features = (features - mean) / (std + 1e-6)
+        return features
 
     batch_runner = jax.jit(jax.vmap(run_one, in_axes=(0, None, None), out_axes=0))
     return weights, initial_state, batch_runner
