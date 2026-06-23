@@ -19,16 +19,16 @@ exp:
     log_to_stdout: True
     warm_cache: False
     val_freq: 5    # validate every v_f epochs
-    n_workers: 0
-    pin_memory: True
-    cache: 2 # 0 -> no cache | 1 -> cache wavs | 2 -> cache specs; stops wav augments
+    n_workers: 8
+    pin_memory: False
+    cache: 0 # 0 -> lazy load disk feature cache | 2 -> preload all features into RAM
     feature_cache: True
-    feature_cache_dir: ./data/.feature_cache_carfac_smallest
+    feature_cache_dir: ./feature_cache_carfac_smallest
 
 hparams:
     seed: 0
     precision: bfloat16 # one of float32, bfloat16, or float16
-    batch_size: 512
+    batch_size: 4096
     grad_accum_steps: 1
     n_epochs: 1500
     l_smooth: 0.1
