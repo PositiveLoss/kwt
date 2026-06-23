@@ -27,7 +27,7 @@ exp:
 
 hparams:
     seed: 0
-    precision: float32 # one of float32, bfloat16, or float16
+    precision: bfloat16 # one of float32, bfloat16, or float16
     batch_size: 512
     grad_accum_steps: 1
     n_epochs: 250
