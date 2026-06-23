@@ -25,7 +25,11 @@ from utils.types import Config
 
 FEATURE_CACHE_VERSION = 6
 SPAFE_CEPSTRAL_FEATURES = {"mfcc", "pncc", "gfcc", "ngcc", "bfcc", "rplp"}
-SUPPORTED_FEATURE_TYPES = SPAFE_CEPSTRAL_FEATURES | {"cochleagram", "connear"}
+SUPPORTED_FEATURE_TYPES = SPAFE_CEPSTRAL_FEATURES | {
+    "carfac",
+    "cochleagram",
+    "connear",
+}
 
 
 def resolve_dataset_path(root: str, path: str) -> str:
@@ -239,6 +243,8 @@ def extract_features(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarra
         features = extract_cepstral_spafe(x, audio_settings, feature_type)
     elif feature_type == "cochleagram":
         features = extract_cochleagram_spafe(x, audio_settings)
+    elif feature_type == "carfac":
+        features = extract_carfac_numpy(x, audio_settings)
     elif feature_type == "connear":
         features = extract_connear(x, audio_settings)
     else:
@@ -298,6 +304,33 @@ def extract_cochleagram_spafe(
     return np.asarray(output.cochleagram, dtype=np.float32)
 
 
+def extract_carfac_numpy(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
+    from carfac.np import carfac
+
+    sr = int(audio_settings["sr"])
+    frame_length = int(audio_settings.get("carfac_frame_length", sr // 100))
+    frame_length = max(1, frame_length)
+    log_scale = float(audio_settings.get("carfac_log_scale", 1.0))
+    output_channels = audio_settings.get("carfac_output_channels")
+
+    cfp = carfac.design_carfac(fs=sr, n_ears=1)
+    cfp = carfac.carfac_init(cfp)
+    naps, _, _, _, _ = carfac.run_segment(cfp, x.astype(np.float32, copy=False))
+    nap = np.asarray(naps[:, :, 0], dtype=np.float32)
+
+    num_frames = max(1, nap.shape[0] // frame_length)
+    trim = num_frames * frame_length
+    if trim > nap.shape[0]:
+        nap = np.pad(nap, ((0, trim - nap.shape[0]), (0, 0)))
+    else:
+        nap = nap[:trim]
+    features = nap.reshape(num_frames, frame_length, nap.shape[1]).mean(axis=1).T
+    features = np.log1p(np.maximum(features, 0.0) * log_scale)
+    if output_channels is not None and int(output_channels) > 0:
+        features = resize_feature_frequency(features, int(output_channels))
+    return np.asarray(features, dtype=np.float32)
+
+
 def extract_connear(x: np.ndarray, audio_settings: dict[str, Any]) -> np.ndarray:
     return extract_connear_batch([x], audio_settings)[0]
 
@@ -343,14 +376,30 @@ def resize_feature_time(
     return np.asarray(resized, dtype=np.float32)
 
 
+def resize_feature_frequency(features: np.ndarray, output_channels: int) -> np.ndarray:
+    if output_channels <= 0 or features.shape[0] == output_channels:
+        return features
+
+    old_positions = np.linspace(0.0, 1.0, num=features.shape[0])
+    new_positions = np.linspace(0.0, 1.0, num=output_channels)
+    resized = [
+        np.interp(new_positions, old_positions, features[:, col])
+        for col in range(features.shape[1])
+    ]
+    return np.asarray(resized, dtype=np.float32).T
+
+
 def get_feature_cache_settings(audio_settings: dict[str, Any]) -> dict[str, Any]:
     cache_settings = dict(audio_settings)
     feature_type = get_feature_type(audio_settings)
     if feature_type == "connear":
         cache_settings["connear_weights_url"] = CONNEAR_WEIGHTS_URL
-    cache_settings["feature_backend"] = (
-        "connear-pytorch" if feature_type == "connear" else f"spafe-rs:{feature_type}"
-    )
+    if feature_type == "connear":
+        cache_settings["feature_backend"] = "connear-pytorch"
+    elif feature_type == "carfac":
+        cache_settings["feature_backend"] = "carfac-jax:nap"
+    else:
+        cache_settings["feature_backend"] = f"spafe-rs:{feature_type}"
     return cache_settings
 
 
