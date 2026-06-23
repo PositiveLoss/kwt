@@ -1,0 +1,102 @@
+# lightweight config using CARFAC-JAX NAP features
+
+data_root: ./data/
+train_list_file: ./data/training_list.txt
+val_list_file: ./data/validation_list.txt
+test_list_file: ./data/testing_list.txt
+label_map: ./data/label_map.json
+
+exp:
+    trackio: False
+    trackio_space_id:
+    trackio_server_url:
+    proj_name: torch-kwt-carfac-light
+    exp_dir: ./runs
+    exp_name: exp-carfac-light-0.0.1
+    device: auto
+    log_freq: 20    # log every l_f steps
+    log_to_file: True
+    log_to_stdout: True
+    warm_cache: False
+    val_freq: 5    # validate every v_f epochs
+    n_workers: 0
+    pin_memory: True
+    cache: 0 # 0 -> no cache | 1 -> cache wavs | 2 -> cache specs; stops wav augments
+    feature_cache: True
+    feature_cache_dir: ./feature_cache_carfac_smallest
+
+hparams:
+    seed: 0
+    precision: float32 # one of float32, bfloat16, or float16
+    batch_size: 512
+    grad_accum_steps: 1
+    n_epochs: 250
+    l_smooth: 0.1
+
+    audio:
+        feature_type: carfac
+        feature_time_bins: 98
+        sr: 16000
+        n_mels: 40
+        n_fft: 480
+        win_length: 480
+        hop_length: 160
+        coch_env_sr: 100
+        coch_filter_n: 38
+        coch_low_freq: 50.0
+        coch_high_freq: 8000.0
+        carfac_frame_length: 160
+        carfac_log_scale: 1.0
+        carfac_normalize: True
+        carfac_output_channels:
+        cache_log_every: 1000
+
+    model:
+        name:
+        input_res: [65, 98]
+        patch_res: [65, 2]
+        num_classes: 35
+        mlp_dim: 192
+        dim: 48
+        heads: 1
+        depth: 6
+        dim_head: 48
+        dropout: 0.0
+        emb_dropout: 0.1
+        pre_norm: False
+        use_sdpa: True
+        use_helion_kernels: True
+
+    optimizer:
+        opt_type: adamw_fused
+        opt_kwargs:
+          lr: 0.001
+          weight_decay: 0.1
+
+    scheduler:
+        n_warmup: 0
+        max_epochs: 250
+        scheduler_type: one_cycle_lr
+        max_lr: 0.001
+        pct_start: 0.1
+        div_factor: 25.0
+        final_div_factor: 10000.0
+        anneal_strategy: cos
+
+    augment:
+        resample:
+            r_min: 0.85
+            r_max: 1.15
+
+        time_shift:
+            s_min: -0.1
+            s_max: 0.1
+
+        bg_noise:
+            bg_folder: ./data/_background_noise_/
+
+        spec_aug:
+            n_time_masks: 2
+            time_mask_width: 25
+            n_freq_masks: 2
+            freq_mask_width: 7
