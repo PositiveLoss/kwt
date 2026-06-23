@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import logging
 import os
 import sys
 import time
@@ -42,6 +43,27 @@ DEFAULT_AUDIO_SETTINGS: dict[str, Any] = {
     "carfac_log_scale": 1.0,
     "carfac_output_channels": None,
 }
+
+
+LOGGER = logging.getLogger("carfac.prepare_features")
+
+
+def setup_logging(log_file: Path | None, verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    formatter = logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, mode="a"))
+
+    for handler in handlers:
+        handler.setFormatter(formatter)
+
+    logging.basicConfig(level=level, handlers=handlers, force=True)
 
 
 def load_audio_settings(config_path: Path | None) -> dict[str, Any]:
@@ -125,8 +147,10 @@ def ensure_lists(data_root: Path) -> None:
         data_root / "label_map.json",
     ]
     if all(path.exists() for path in required):
+        LOGGER.info("Dataset split files already exist under %s", data_root)
         return
 
+    LOGGER.info("Creating dataset split files under %s", data_root)
     args = argparse.Namespace(
         val_list_file=str(data_root / "validation_list.txt"),
         test_list_file=str(data_root / "testing_list.txt"),
@@ -137,6 +161,7 @@ def ensure_lists(data_root: Path) -> None:
 
 
 def make_runner(carfac_jax: Any, jax: Any, audio_settings: dict[str, Any]) -> Any:
+    LOGGER.info("Designing CARFAC model at sr=%s", audio_settings["sr"])
     params = carfac_jax.CarfacDesignParameters.with_n_ears(
         n_ears=1,
         fs=float(audio_settings["sr"]),
@@ -233,28 +258,61 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--allow-non-tpu", action="store_true")
     parser.add_argument("--make-lists", action="store_true")
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Log file path. Defaults to <out-dir>/prepare_features.log.",
+    )
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=1000,
+        help="Write progress to the log every N completed files.",
+    )
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     data_root = args.data_root.resolve()
     out_dir = args.out_dir.resolve()
+    log_file = (
+        args.log_file.resolve()
+        if args.log_file is not None
+        else out_dir / "prepare_features.log"
+    )
+    setup_logging(log_file, verbose=args.verbose)
+    LOGGER.info("CARFAC feature preparation started")
+    LOGGER.info("data_root=%s out_dir=%s config=%s", data_root, out_dir, args.config)
+    LOGGER.info(
+        "overwrite=%s require_tpu=%s limit=%s lists=%s",
+        args.overwrite,
+        not args.allow_non_tpu,
+        args.limit,
+        [str(path) for path in args.lists],
+    )
+
     if args.make_lists:
         ensure_lists(data_root)
 
     audio_settings = load_audio_settings(args.config)
+    LOGGER.info("Audio settings: %s", json.dumps(audio_settings, sort_keys=True))
     files = collect_dataset_files(data_root, args.lists)
     if args.limit is not None:
         files = files[: args.limit]
     if not files:
+        LOGGER.error("No .wav files found under %s", data_root)
         raise SystemExit(f"No .wav files found under {data_root}.")
+    LOGGER.info("Collected %d wav files", len(files))
 
     jax, jnp, carfac_jax = import_jax_carfac(require_tpu=not args.allow_non_tpu)
-    print("JAX devices:", ", ".join(str(device) for device in jax.devices()))
-    print(f"Preparing {len(files)} files into {out_dir}")
-    print(f"Audio settings: {audio_settings}")
+    devices = ", ".join(str(device) for device in jax.devices())
+    LOGGER.info("JAX devices: %s", devices)
+    LOGGER.info("Preparing %d files into %s", len(files), out_dir)
 
     weights, initial_state, segment_runner = make_runner(
         carfac_jax, jax, audio_settings
     )
+    LOGGER.info("Running JAX warmup compile")
     warmup = jnp.zeros((int(audio_settings["sr"]), 1), dtype=jnp.float32)
     segment_runner(
         warmup,
@@ -262,32 +320,75 @@ def main() -> None:
         state=initial_state,
         open_loop=bool(audio_settings.get("carfac_open_loop", False)),
     )[0].block_until_ready()
+    LOGGER.info("JAX warmup compile finished")
 
     start = time.perf_counter()
     hits = 0
     built = 0
+    log_every = max(1, int(args.log_every))
     for path in tqdm(files, desc="carfac features"):
         cache_path = get_feature_cache_path(path, audio_settings, str(out_dir))
         if cache_path.exists() and not args.overwrite:
             hits += 1
+            LOGGER.debug("cache hit path=%s cache_path=%s", path, cache_path)
+            completed = hits + built
+            if completed % log_every == 0 or completed == len(files):
+                elapsed = time.perf_counter() - start
+                LOGGER.info(
+                    "Progress %d/%d (%.1f%%), hits=%d, built=%d, rate=%.2f/s",
+                    completed,
+                    len(files),
+                    completed / len(files) * 100,
+                    hits,
+                    built,
+                    completed / max(elapsed, 1e-9),
+                )
             continue
-        features = extract_carfac_features(
-            path,
-            audio_settings,
-            weights,
-            initial_state,
-            segment_runner,
-            jnp,
-        )
+        try:
+            features = extract_carfac_features(
+                path,
+                audio_settings,
+                weights,
+                initial_state,
+                segment_runner,
+                jnp,
+            )
+        except Exception:
+            LOGGER.exception("Feature extraction failed for path=%s", path)
+            raise
         save_feature_to_disk_cache(cache_path, features)
         built += 1
+        LOGGER.debug(
+            "built path=%s cache_path=%s shape=%s dtype=%s",
+            path,
+            cache_path,
+            features.shape,
+            features.dtype,
+        )
+        completed = hits + built
+        if completed % log_every == 0 or completed == len(files):
+            elapsed = time.perf_counter() - start
+            LOGGER.info(
+                "Progress %d/%d (%.1f%%), hits=%d, built=%d, rate=%.2f/s",
+                completed,
+                len(files),
+                completed / len(files) * 100,
+                hits,
+                built,
+                completed / max(elapsed, 1e-9),
+            )
 
     elapsed = time.perf_counter() - start
     write_metadata(out_dir, audio_settings, files, elapsed, hits, built)
-    print(
-        f"Done: files={len(files)}, cache_hits={hits}, built={built}, "
-        f"elapsed={elapsed:.1f}s, output={out_dir}"
+    LOGGER.info(
+        "Done: files=%d, cache_hits=%d, built=%d, elapsed=%.1fs, output=%s",
+        len(files),
+        hits,
+        built,
+        elapsed,
+        out_dir,
     )
+    LOGGER.info("Log file: %s", log_file)
 
 
 if __name__ == "__main__":
