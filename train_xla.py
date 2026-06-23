@@ -197,14 +197,15 @@ def train_one_batch(
     loss_scale: float,
     num_classes: int,
     precision: str,
-) -> tuple[float, int, int]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     validate_targets(targets, num_classes)
     with xla_autocast(device, precision):
         outputs = model(data)
         loss = criterion(outputs, targets)
     (loss / loss_scale).backward()
     correct = outputs.argmax(1).eq(targets).sum()
-    return float(loss.detach().item()), int(correct.item()), int(targets.numel())
+    count = torch.tensor(targets.numel(), device=device, dtype=torch.float32)
+    return loss.detach(), correct.detach().to(torch.float32), count
 
 
 @torch.no_grad()
@@ -420,9 +421,9 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
         t0 = time.perf_counter()
         train_sampler.set_epoch(epoch)
         val_sampler.set_epoch(epoch)
-        local_loss = 0.0
-        local_correct = 0
-        local_count = 0
+        local_loss = torch.zeros((), device=device)
+        local_correct = torch.zeros((), device=device)
+        local_count = torch.zeros((), device=device)
         n_batches = len(trainloader)
 
         for batch_index, (data, targets) in enumerate(train_device_loader):
@@ -435,7 +436,7 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
             elif schedulers["scheduler"] is not None:
                 active_scheduler = schedulers["scheduler"]
 
-            loss, correct, count = train_one_batch(
+            loss_tensor, correct_tensor, count_tensor = train_one_batch(
                 model,
                 data,
                 targets,
@@ -447,9 +448,9 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
                 num_classes=num_classes,
                 precision=precision,
             )
-            local_loss += loss
-            local_correct += correct
-            local_count += count
+            local_loss = local_loss + loss_tensor
+            local_correct = local_correct + correct_tensor
+            local_count = local_count + count_tensor
 
             should_step_optimizer = (batch_index + 1) % grad_accum_steps == 0 or (
                 batch_index + 1
@@ -466,7 +467,7 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
                 master_log(
                     {
                         "epoch": epoch,
-                        "loss": loss,
+                        "loss": float(loss_tensor.item()),
                         "grad_accum_steps": grad_accum_steps,
                         "lr": optimizer.param_groups[0]["lr"],
                     },
@@ -476,9 +477,11 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
                 )
             step += 1
 
-        train_correct = reduce_sum(local_correct, device, xm)
-        train_count = reduce_sum(local_count, device, xm)
-        train_loss = reduce_mean(local_loss / max(n_batches, 1), device, xm)
+        train_correct = reduce_sum(float(local_correct.item()), device, xm)
+        train_count = reduce_sum(float(local_count.item()), device, xm)
+        train_loss = reduce_mean(
+            float((local_loss / max(n_batches, 1)).item()), device, xm
+        )
         master_log(
             {
                 "epoch": epoch,
