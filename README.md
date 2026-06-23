@@ -1,8 +1,6 @@
 # Torch-KWT
+
 Unofficial PyTorch implementation of [*Keyword Transformer: A Self-Attention Model for Keyword Spotting*](https://arxiv.org/abs/2104.00769).
-
-<a href="https://colab.research.google.com/github/ID56/Torch-KWT/blob/main/notebooks/Torch_KWT_Tutorial.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"/></a>
-
 
 ## Setup
 
@@ -125,9 +123,6 @@ ONNX export uses `hparams.precision` by default. Pass `--dtype float32`, `--dtyp
 ## Helion Kernels
 
 `use_helion_kernels: True` enables optional experimental Helion GELU forward/backward kernels in the transformer MLP. Keep it disabled for normal training unless you are validating the custom kernel on your CUDA stack. CPU and MPS runs fall back to PyTorch GELU.
-
-## Tutorials
-- [Colab Tutorial: [Using pretrained model | Inference scripts | Training]](https://colab.research.google.com/github/ID56/Torch-KWT/blob/main/notebooks/Torch_KWT_Tutorial.ipynb)
 
 ## Trackio
 
