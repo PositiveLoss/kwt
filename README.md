@@ -132,13 +132,3 @@ ONNX export uses `hparams.precision` by default. Pass `--dtype float32`, `--dtyp
 ## Trackio
 
 You can also set `exp.trackio: True` in `config.yaml` to log the same training metrics with [Trackio](https://github.com/gradio-app/trackio). By default Trackio logs locally; set `trackio_space_id` or `trackio_server_url` when you want to send runs to a remote dashboard.
-
-## Pretrained Checkpoints
-
-New training runs save safetensors checkpoints. The original KWT-1 pretrained file below is a legacy PyTorch checkpoint and remains loadable for compatibility.
-
-| Model Name | Test Accuracy | Link |
-| ---------- | ------------- | ---- |
-|    KWT-1   |     95.98*     | [kwt1-v01.pth](https://drive.google.com/uc?id=1y91PsZrnBXlmVmcDi26lDnpl4PoC5tXi&export=download) |
-
-*The [example config file](config.yaml) provided contains the exact settings used to train the KWT-1 checkpoint, and should be reproducible.
