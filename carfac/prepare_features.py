@@ -8,6 +8,7 @@ uv run python carfac/prepare_features.py \
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import json
 import logging
 import os
@@ -45,6 +46,18 @@ DEFAULT_AUDIO_SETTINGS: dict[str, Any] = {
 
 
 LOGGER = logging.getLogger("carfac.prepare_features")
+THROUGHPUT_PRESETS = {
+    "default": {
+        "batch_size": 64,
+        "load_workers": 4,
+        "save_workers": 4,
+    },
+    "tpu-v6e": {
+        "batch_size": 256,
+        "load_workers": 16,
+        "save_workers": 16,
+    },
+}
 
 
 def setup_logging(log_file: Path | None, verbose: bool) -> None:
@@ -159,70 +172,70 @@ def ensure_lists(data_root: Path) -> None:
     make_data_lists(args)
 
 
-def make_runner(carfac_jax: Any, jax: Any, audio_settings: dict[str, Any]) -> Any:
+def make_runner(
+    carfac_jax: Any, jax: Any, jnp: Any, audio_settings: dict[str, Any]
+) -> Any:
     LOGGER.info("Designing CARFAC model at sr=%s", audio_settings["sr"])
+    sr = int(audio_settings["sr"])
+    frame_length = max(1, int(audio_settings.get("carfac_frame_length", sr // 100)))
+    num_frames = max(1, sr // frame_length)
+    trim = num_frames * frame_length
+    log_scale = float(audio_settings.get("carfac_log_scale", 1.0))
     params = carfac_jax.CarfacDesignParameters.with_n_ears(
         n_ears=1,
-        fs=float(audio_settings["sr"]),
+        fs=float(sr),
     )
     hypers, weights, initial_state = carfac_jax.design_and_init_carfac(params)
     open_loop = bool(audio_settings.get("carfac_open_loop", False))
 
     def run_one(input_waves: Any, carfac_weights: Any, carfac_state: Any) -> Any:
-        return carfac_jax.run_segment(
+        naps, _, _, _, _, _ = carfac_jax.run_segment(
             input_waves,
             hypers,
             carfac_weights,
             carfac_state,
             open_loop=open_loop,
         )
+        nap = naps[:trim, :, 0]
+        features = jnp.mean(
+            jnp.reshape(nap, (num_frames, frame_length, nap.shape[1])),
+            axis=1,
+        ).T
+        return jnp.log1p(jnp.maximum(features, 0.0) * log_scale)
 
-    batch_runner = jax.jit(
-        jax.vmap(run_one, in_axes=(0, None, None), out_axes=(0, 0, 0, 0, 0, 0))
-    )
+    batch_runner = jax.jit(jax.vmap(run_one, in_axes=(0, None, None), out_axes=0))
     return weights, initial_state, batch_runner
+
+
+def load_one_waveform(path: str, sr: int) -> np.ndarray:
+    return fix_length(load_audio(path, sr=sr), size=sr)
 
 
 def load_waveform_batch(
     paths: list[str],
     sr: int,
     batch_size: int,
+    load_executor: ThreadPoolExecutor | None,
 ) -> np.ndarray:
     waveforms = np.zeros((batch_size, sr, 1), dtype=np.float32)
-    for index, path in enumerate(paths):
-        waveforms[index, :, 0] = fix_length(load_audio(path, sr=sr), size=sr)
+    if load_executor is None:
+        loaded = (load_one_waveform(path, sr) for path in paths)
+    else:
+        loaded = load_executor.map(lambda path: load_one_waveform(path, sr), paths)
+    for index, waveform in enumerate(loaded):
+        waveforms[index, :, 0] = waveform
     return waveforms
 
 
-def pool_naps_to_features(
-    nap_batch: np.ndarray,
+def postprocess_feature_batch(
+    feature_batch: np.ndarray,
     audio_settings: dict[str, Any],
     actual_count: int,
 ) -> list[np.ndarray]:
-    sr = int(audio_settings["sr"])
-    nap_batch = np.asarray(nap_batch[:actual_count, :, :, 0], dtype=np.float32)
-    frame_length = max(1, int(audio_settings.get("carfac_frame_length", sr // 100)))
-    num_frames = max(1, nap_batch.shape[1] // frame_length)
-    trim = num_frames * frame_length
-    if trim > nap_batch.shape[1]:
-        nap_batch = np.pad(nap_batch, ((0, 0), (0, trim - nap_batch.shape[1]), (0, 0)))
-    else:
-        nap_batch = nap_batch[:, :trim, :]
-
-    features = nap_batch.reshape(
-        actual_count,
-        num_frames,
-        frame_length,
-        nap_batch.shape[2],
-    )
-    features = features.mean(axis=2).transpose(0, 2, 1)
-    features = np.log1p(
-        np.maximum(features, 0.0) * float(audio_settings.get("carfac_log_scale", 1.0))
-    )
-
+    feature_batch = np.asarray(feature_batch[:actual_count], dtype=np.float32)
     output: list[np.ndarray] = []
     output_channels = audio_settings.get("carfac_output_channels")
-    for item in features:
+    for item in feature_batch:
         if output_channels is not None and int(output_channels) > 0:
             item = resize_feature_frequency(item, int(output_channels))
         output.append(
@@ -242,12 +255,20 @@ def extract_carfac_batch(
     batch_runner: Any,
     jnp: Any,
     batch_size: int,
+    load_executor: ThreadPoolExecutor | None,
 ) -> list[np.ndarray]:
     sr = int(audio_settings["sr"])
-    waveforms = load_waveform_batch(paths, sr=sr, batch_size=batch_size)
+    waveforms = load_waveform_batch(
+        paths,
+        sr=sr,
+        batch_size=batch_size,
+        load_executor=load_executor,
+    )
     input_waves = jnp.asarray(waveforms, dtype=jnp.float32)
-    naps, _, _, _, _, _ = batch_runner(input_waves, weights, initial_state)
-    return pool_naps_to_features(np.asarray(naps), audio_settings, len(paths))
+    feature_batch = batch_runner(input_waves, weights, initial_state)
+    return postprocess_feature_batch(
+        np.asarray(feature_batch), audio_settings, len(paths)
+    )
 
 
 def log_progress(
@@ -313,6 +334,12 @@ def main() -> None:
     parser.add_argument("--allow-non-tpu", action="store_true")
     parser.add_argument("--make-lists", action="store_true")
     parser.add_argument(
+        "--preset",
+        choices=sorted(THROUGHPUT_PRESETS),
+        default="default",
+        help="Throughput preset for batch and worker defaults.",
+    )
+    parser.add_argument(
         "--log-file",
         type=Path,
         default=None,
@@ -327,11 +354,31 @@ def main() -> None:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
-        help="Number of clips per JAX CARFAC dispatch. TPU runs usually want 64+.",
+        default=None,
+        help="Number of clips per JAX CARFAC dispatch.",
+    )
+    parser.add_argument(
+        "--load-workers",
+        type=int,
+        default=None,
+        help="Parallel WAV loader threads.",
+    )
+    parser.add_argument(
+        "--save-workers",
+        type=int,
+        default=None,
+        help="Parallel feature-cache writer threads.",
     )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
+    preset = THROUGHPUT_PRESETS[args.preset]
+    batch_size = int(args.batch_size or preset["batch_size"])
+    load_workers = int(
+        args.load_workers if args.load_workers is not None else preset["load_workers"]
+    )
+    save_workers = int(
+        args.save_workers if args.save_workers is not None else preset["save_workers"]
+    )
 
     data_root = args.data_root.resolve()
     out_dir = args.out_dir.resolve()
@@ -350,8 +397,19 @@ def main() -> None:
         args.limit,
         [str(path) for path in args.lists],
     )
-    if args.batch_size < 1:
+    LOGGER.info(
+        "preset=%s batch_size=%d load_workers=%d save_workers=%d",
+        args.preset,
+        batch_size,
+        load_workers,
+        save_workers,
+    )
+    if batch_size < 1:
         raise SystemExit("--batch-size must be >= 1.")
+    if load_workers < 0:
+        raise SystemExit("--load-workers must be >= 0.")
+    if save_workers < 0:
+        raise SystemExit("--save-workers must be >= 0.")
 
     if args.make_lists:
         ensure_lists(data_root)
@@ -373,14 +431,17 @@ def main() -> None:
         "Preparing %d files into %s with batch_size=%d",
         len(files),
         out_dir,
-        args.batch_size,
+        batch_size,
     )
 
-    weights, initial_state, batch_runner = make_runner(carfac_jax, jax, audio_settings)
-    LOGGER.info("Running JAX warmup compile")
-    warmup = jnp.zeros(
-        (args.batch_size, int(audio_settings["sr"]), 1), dtype=jnp.float32
+    weights, initial_state, batch_runner = make_runner(
+        carfac_jax,
+        jax,
+        jnp,
+        audio_settings,
     )
+    LOGGER.info("Running JAX warmup compile")
+    warmup = jnp.zeros((batch_size, int(audio_settings["sr"]), 1), dtype=jnp.float32)
     batch_runner(warmup, weights, initial_state)[0].block_until_ready()
     LOGGER.info("JAX warmup compile finished")
 
@@ -391,6 +452,41 @@ def main() -> None:
     log_every = max(1, int(args.log_every))
     pending_paths: list[str] = []
     pending_cache_paths: list[Path] = []
+    save_futures: set[Future] = set()
+    load_executor = (
+        ThreadPoolExecutor(max_workers=load_workers) if load_workers else None
+    )
+    save_executor = (
+        ThreadPoolExecutor(max_workers=save_workers) if save_workers else None
+    )
+
+    def drain_save_futures(block: bool) -> None:
+        nonlocal save_futures
+        if not save_futures:
+            return
+        if block:
+            done = save_futures
+            save_futures = set()
+        else:
+            done = {future for future in save_futures if future.done()}
+            save_futures -= done
+        for future in done:
+            future.result()
+
+    def queue_save(cache_path: Path, features: np.ndarray) -> None:
+        if save_executor is None:
+            save_feature_to_disk_cache(cache_path, features)
+            return
+        save_futures.add(
+            save_executor.submit(save_feature_to_disk_cache, cache_path, features)
+        )
+        max_pending_saves = max(1, save_workers * 4)
+        while len(save_futures) >= max_pending_saves:
+            done, save_futures_remain = wait(save_futures, return_when=FIRST_COMPLETED)
+            save_futures.clear()
+            save_futures.update(save_futures_remain)
+            for future in done:
+                future.result()
 
     def flush_pending(progress: tqdm) -> None:
         nonlocal built, completed, pending_paths, pending_cache_paths
@@ -404,7 +500,8 @@ def main() -> None:
                 initial_state,
                 batch_runner,
                 jnp,
-                args.batch_size,
+                batch_size,
+                load_executor,
             )
         except Exception:
             LOGGER.exception(
@@ -415,7 +512,7 @@ def main() -> None:
         for path, cache_path, features in zip(
             pending_paths, pending_cache_paths, feature_batch, strict=True
         ):
-            save_feature_to_disk_cache(cache_path, features)
+            queue_save(cache_path, features)
             built += 1
             completed += 1
             progress.update(1)
@@ -432,24 +529,32 @@ def main() -> None:
         pending_paths = []
         pending_cache_paths = []
 
-    with tqdm(total=len(files), desc="carfac features") as progress:
-        for path in files:
-            cache_path = get_feature_cache_path(path, audio_settings, str(out_dir))
-            if cache_path.exists() and not args.overwrite:
-                hits += 1
-                completed += 1
-                progress.update(1)
-                LOGGER.debug("cache hit path=%s cache_path=%s", path, cache_path)
-                if completed % log_every == 0 or completed == len(files):
-                    log_progress(completed, len(files), hits, built, start)
-                continue
+    try:
+        with tqdm(total=len(files), desc="carfac features") as progress:
+            for path in files:
+                cache_path = get_feature_cache_path(path, audio_settings, str(out_dir))
+                if cache_path.exists() and not args.overwrite:
+                    hits += 1
+                    completed += 1
+                    progress.update(1)
+                    LOGGER.debug("cache hit path=%s cache_path=%s", path, cache_path)
+                    if completed % log_every == 0 or completed == len(files):
+                        log_progress(completed, len(files), hits, built, start)
+                    continue
 
-            pending_paths.append(path)
-            pending_cache_paths.append(cache_path)
-            if len(pending_paths) >= args.batch_size:
-                flush_pending(progress)
+                pending_paths.append(path)
+                pending_cache_paths.append(cache_path)
+                if len(pending_paths) >= batch_size:
+                    flush_pending(progress)
+                    drain_save_futures(block=False)
 
-        flush_pending(progress)
+            flush_pending(progress)
+            drain_save_futures(block=True)
+    finally:
+        if load_executor is not None:
+            load_executor.shutdown(wait=True)
+        if save_executor is not None:
+            save_executor.shutdown(wait=True)
 
     elapsed = time.perf_counter() - start
     write_metadata(out_dir, audio_settings, files, elapsed, hits, built)
