@@ -30,7 +30,7 @@ hparams:
     precision: bfloat16 # one of float32, bfloat16, or float16
     batch_size: 512
     grad_accum_steps: 1
-    n_epochs: 1500
+    n_epochs: 250
     l_smooth: 0.1
 
     audio:
@@ -74,7 +74,7 @@ hparams:
 
     scheduler:
         n_warmup: 0
-        max_epochs: 1500
+        max_epochs: 250
         scheduler_type: one_cycle_lr
         max_lr: 0.001
         pct_start: 0.1
