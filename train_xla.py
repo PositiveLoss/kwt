@@ -128,12 +128,16 @@ def make_loader(
 
 
 def reduce_sum(value: float | int, device: torch.device, xm: Any) -> float:
+    if xm.xrt_world_size() == 1:
+        return float(value)
     tensor = torch.tensor(float(value), device=device)
     reduced = xm.all_reduce(xm.REDUCE_SUM, tensor)
     return float(reduced.item())
 
 
 def reduce_mean(value: float, device: torch.device, xm: Any) -> float:
+    if xm.xrt_world_size() == 1:
+        return float(value)
     tensor = torch.tensor(float(value), device=device)
     reduced = xm.all_reduce(xm.REDUCE_SUM, tensor)
     return float((reduced / xm.xrt_world_size()).item())
@@ -262,6 +266,11 @@ def save_xla_checkpoint(
     )
 
 
+def rendezvous_if_distributed(tag: str, xm: Any) -> None:
+    if xm.xrt_world_size() > 1:
+        xm.rendezvous(tag)
+
+
 def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
     xm, pl, _ = import_xla()
     device = xm.xla_device()
@@ -282,7 +291,7 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
         with open(os.path.join(config["exp"]["save_dir"], "settings.txt"), "w+") as f:
             f.write(yaml.dump(config))
         log_event(f"XLA run directory: {config['exp']['save_dir']}", config)
-    xm.rendezvous("save_dir_ready")
+    rendezvous_if_distributed("save_dir_ready", xm)
     if "save_dir" not in config["exp"]:
         config["exp"]["save_dir"] = os.path.join(
             config["exp"]["exp_dir"], config["exp"]["exp_name"]
@@ -496,7 +505,7 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
         config,
         xm,
     )
-    xm.rendezvous("final_last_saved")
+    rendezvous_if_distributed("final_last_saved", xm)
 
     test_list = read_split(config["test_list_file"])
     testloader, test_sampler = make_loader(
@@ -545,12 +554,15 @@ def train_xla_worker(index: int, args: Namespace, base_config: Config) -> None:
 
 def main(args: Namespace) -> None:
     os.environ.setdefault("PJRT_DEVICE", "TPU")
-    _, _, xmp = import_xla()
     config = load_config(args.conf, args.precision)
     ensure_data_lists(config)
     validate_label_map(config)
-    nprocs = args.nprocs
-    xmp.spawn(train_xla_worker, args=(args, config), nprocs=nprocs)
+    if args.nprocs == 1:
+        train_xla_worker(0, args, config)
+        return
+
+    _, _, xmp = import_xla()
+    xmp.spawn(train_xla_worker, args=(args, config), nprocs=args.nprocs)
 
 
 if __name__ == "__main__":
@@ -571,7 +583,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--nprocs",
         type=int,
-        default=None,
-        help="Number of XLA worker processes. Leave unset for all TPU devices.",
+        default=1,
+        help=(
+            "Number of XLA worker processes. Use 1 for a single TPU chip. "
+            "Set above 1 only when the TPU runtime exposes matching local workers."
+        ),
     )
     main(parser.parse_args())
