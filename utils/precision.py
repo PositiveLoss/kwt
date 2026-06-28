@@ -22,7 +22,9 @@ def resolve_precision(precision: str | None) -> str:
     normalized = precision.lower()
     if normalized not in PRECISION_ALIASES:
         valid = ", ".join(sorted(PRECISION_ALIASES))
-        raise ValueError(f"Unsupported precision {precision!r}. Expected one of: {valid}.")
+        raise ValueError(
+            f"Unsupported precision {precision!r}. Expected one of: {valid}."
+        )
 
     return PRECISION_ALIASES[normalized]
 

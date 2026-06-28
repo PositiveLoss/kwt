@@ -80,9 +80,10 @@ Refer to the [example config](config.yaml) to see how the config file looks like
 
 ## Inference
 
-You can use the pre-trained model (or a model you trained) for inference, using the two scripts:
+You can use the pre-trained model (or a model you trained) for inference, using these scripts:
 
 - `inference.py`: For short ~1s clips, like the audios in the Speech Commands dataset
+- `inference_onnx.py`: For short ~1s clips using an exported ONNX model
 - `window_inference.py`: For running inference on longer audio clips, where multiple keywords may be present. Runs inference on the audio in a sliding window manner.
 
 ```
@@ -93,6 +94,14 @@ python inference.py --conf config.yaml \
                     --lmap label_map.json \
                     --device auto \
                     --batch_size 8   # should be possible to use much larger batches if necessary, like 128, 256, 512 etc.
+
+python inference_onnx.py --conf config.yaml \
+                    --onnx exports/kwt.onnx \
+                    --inp <path to audio.wav / path to audio folder> \
+                    --out <output directory> \
+                    --lmap label_map.json \
+                    --device auto \
+                    --batch_size 1   # must be <= the static --batch-size used during ONNX export
 
 python window_inference.py --conf config.yaml \
                     --ckpt <path to model.safetensors> \
